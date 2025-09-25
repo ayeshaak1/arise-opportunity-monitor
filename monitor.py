@@ -2,116 +2,128 @@ import requests
 from bs4 import BeautifulSoup
 import hashlib
 import os
+import smtplib
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
+import logging
 import sys
 
-# Get credentials and settings from environment variables
-ARISE_USERNAME = os.getenv('ARISE_USERNAME')
-ARISE_PASSWORD = os.getenv('ARISE_PASSWORD')
-PUSHOVER_USER_KEY = os.getenv('PUSHOVER_USER_KEY')
-PUSHOVER_API_TOKEN = os.getenv('PUSHOVER_API_TOKEN')
+# Set up logging to see what's happening
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-def send_pushover_notification(message):
-    """Send a push notification via Pushover"""
-    if not PUSHOVER_API_TOKEN or not PUSHOVER_USER_KEY:
-        print("Pushover credentials not set.")
+def send_email_notification(message):
+    """
+    Sends an email notification using Gmail's SMTP server.
+    """
+    sender_email = os.getenv('GMAIL_ADDRESS')
+    sender_password = os.getenv('GMAIL_APP_PASSWORD')
+    receiver_email = sender_email  # Send the alert to yourself
+
+    # Create the email message
+    msg = MimeMultipart()
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg['Subject'] = "🚨 New Arise Opportunity Alert!"
+    msg.attach(MimeText(message, 'plain'))
+
+    try:
+        # Connect to Gmail's SMTP server and send the email
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()  # Upgrade the connection to secure
+        server.login(sender_email, sender_password)
+        text = msg.as_string()
+        server.sendmail(sender_email, receiver_email, text)
+        server.quit()
+        logger.info("✅ Email notification sent successfully!")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send email: {e}")
         return False
-        
-    data = {
-        "token": PUSHOVER_API_TOKEN,
-        "user": PUSHOVER_USER_KEY,
-        "message": message,
-        "title": "🚨 Arise Opportunity Alert"
-    }
-    response = requests.post("https://api.pushover.net/1/messages.json", data=data)
-    return response.status_code == 200
 
 def check_for_changes():
+    """
+    Main function to check for opportunity changes on the Arise portal.
+    """
     # Create a session to maintain login state
     session = requests.Session()
-    
-    # Add a common browser user-agent to appear more legitimate
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     })
-    
-    # STEP 1: TRY TO LOGIN
-    # This is a simplified login attempt. You may need to adjust the form data based on the actual Arise login page.
-    login_url = "https://link.arise.com/"  # This might need to be the specific login form URL
+
+    # Get credentials from environment variables
+    arise_username = os.getenv('ARISE_USERNAME')
+    arise_password = os.getenv('ARISE_PASSWORD')
+
+    # STEP 1: Attempt to log in (this is a basic attempt; may need adjustment)
+    login_url = "https://link.arise.com/"
     login_payload = {
-        'username': ARISE_USERNAME,
-        'password': ARISE_PASSWORD,
+        'username': arise_username,
+        'password': arise_password,
     }
-    
-    print("Attempting to log in...")
+    logger.info("Attempting to log in...")
     login_response = session.post(login_url, data=login_payload)
-    
-    # Check if login was successful by looking for a logout link or a common post-login element
+
+    # A simple check for login success - look for a logout link
     if 'logout' not in login_response.text.lower():
-        print("Login may have failed. The script will continue but may not access protected content.")
-        # Don't return False here; still try to access the page as the structure might be different.
-    
-    # STEP 2: ACCESS THE OPPORTUNITIES PAGE
+        logger.warning("Login may have failed. Will try to proceed anyway.")
+
+    # STEP 2: Access the opportunities page
     target_url = "https://link.arise.com/reference"
-    print("Fetching the opportunities page...")
+    logger.info("Fetching the opportunities page...")
     page_response = session.get(target_url)
-    
+
     if page_response.status_code != 200:
-        send_pushover_notification(f"Error: Could not access the page. HTTP Status: {page_response.status_code}")
+        send_email_notification(f"Error: Could not access the Arise page. HTTP Status: {page_response.status_code}")
         return False
-    
-    # Parse the HTML content
+
+    # Parse the HTML
     soup = BeautifulSoup(page_response.content, 'html.parser')
-    
-    # STEP 3: FOCUS ON THE RELEVANT SECTION
-    # Try to find the specific widget or table containing opportunities.
-    # The following line targets the div with ID 'opportunityannouncementwidget' based on the page source you provided.
+
+    # STEP 3: Focus on the relevant section. Try the specific widget first.
     opportunity_section = soup.find('div', id='opportunityannouncementwidget')
-    
-    # If that specific div isn't found, use the entire page body as a fallback.
     if opportunity_section:
         content_to_hash = opportunity_section.get_text()
     else:
+        # Fallback: use the entire body if the specific widget isn't found
         content_to_hash = soup.find('body').get_text() if soup.find('body') else page_response.text
-    
-    # STEP 4: CREATE A HASH OF THE CONTENT
+
+    # STEP 4: Create a hash (fingerprint) of the content
     current_hash = hashlib.md5(content_to_hash.encode('utf-8')).hexdigest()
-    print(f"Current content hash: {current_hash}")
-    
-    # STEP 5: CHECK AGAINST THE PREVIOUS HASH
-    # The previous hash will be stored in a file that persists between workflow runs using GitHub's cache action.
+    logger.info(f"Current content hash: {current_hash}")
+
+    # STEP 5: Check against the previous hash
     previous_hash = None
     try:
         with open('previous_hash.txt', 'r') as f:
             previous_hash = f.read().strip()
     except FileNotFoundError:
-        print("No previous hash found. This is likely the first run.")
-    
+        logger.info("No previous hash found. This is the first run.")
+
     # If it's the first run, just save the hash and exit.
     if previous_hash is None:
         with open('previous_hash.txt', 'w') as f:
             f.write(current_hash)
-        print("Initial hash saved. Monitoring will start on the next run.")
+        logger.info("Initial hash saved. Monitoring will start on the next run.")
         return True
-    
-    # STEP 6: COMPARE AND NOTIFY
+
+    # STEP 6: Compare and notify
     if current_hash != previous_hash:
-        print("Change detected! Sending notification.")
+        logger.info("🎉 Change detected! Sending notification.")
         notification_message = "A change was detected on the Arise opportunities page. Check https://link.arise.com/reference"
-        if send_pushover_notification(notification_message):
-            print("Notification sent successfully.")
-        # Save the new hash as the previous hash for next time
+        send_email_notification(notification_message)
+        # Save the new hash for the next comparison
         with open('previous_hash.txt', 'w') as f:
             f.write(current_hash)
         return True
     else:
-        print("No changes detected.")
+        logger.info("✅ No changes detected.")
         return True
 
 if __name__ == "__main__":
-    # Check that all required environment variables are set
-    if not ARISE_USERNAME or not ARISE_PASSWORD:
-        print("Error: Arise username or password not set in environment variables.")
+    # Check that required environment variables are set
+    if not os.getenv('ARISE_USERNAME') or not os.getenv('ARISE_PASSWORD'):
+        logger.error("Error: Arise username or password not set.")
         sys.exit(1)
-        
     success = check_for_changes()
     sys.exit(0 if success else 1)
