@@ -3,8 +3,8 @@ from bs4 import BeautifulSoup
 import hashlib
 import os
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import logging
 import sys
 
@@ -21,11 +21,11 @@ def send_email_notification(message):
     receiver_email = sender_email  # Send the alert to yourself
 
     # Create the email message
-    msg = MimeMultipart()
+    msg = MIMEMultipart()
     msg['From'] = sender_email
     msg['To'] = receiver_email
     msg['Subject'] = "🚨 New Arise Opportunity Alert!"
-    msg.attach(MimeText(message, 'plain'))
+    msg.attach(MIMEText(message, 'plain'))
 
     try:
         # Connect to Gmail's SMTP server and send the email
