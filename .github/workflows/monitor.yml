@@ -2,7 +2,7 @@ name: Check for Arise Opportunities
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Runs at minute 0 of every hour
+    - cron: '*/10 * * * *'  # Every 10 minutes
   workflow_dispatch:        # Allows you to run the workflow manually from the GitHub UI
 
 jobs:
