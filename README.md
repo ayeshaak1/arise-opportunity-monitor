@@ -1,2 +1,1 @@
 # arise-opportunity-monitor
-
