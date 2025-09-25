@@ -108,7 +108,7 @@ def check_for_changes():
         return True
 
     # STEP 6: Compare and notify
-    if current_hash != previous_hash:
+    if current_hash != previous_hash or True:
         logger.info("🎉 Change detected! Sending notification.")
         notification_message = "A change was detected on the Arise opportunities page. Check https://link.arise.com/reference"
         send_email_notification(notification_message)
