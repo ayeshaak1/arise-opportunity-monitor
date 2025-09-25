@@ -7,6 +7,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import logging
 import sys
+import requests.packages.urllib3
+
+requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for speed
+
+# Set shorter timeouts for faster failure
+REQUEST_TIMEOUT = 10  # seconds
 
 # Set up logging to see what's happening
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,6 +53,7 @@ def check_for_changes():
     """
     # Create a session to maintain login state
     session = requests.Session()
+    session.timeout = REQUEST_TIMEOUT
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     })
@@ -100,7 +107,7 @@ def check_for_changes():
     logger.info("Fetching the opportunities page...")
     
     try:
-        page_response = session.get(target_url)
+        page_response = session.get(target_url, timeout=REQUEST_TIMEOUT)
         page_response.raise_for_status()  # Raises an exception for bad status codes
         
         if page_response.status_code != 200:
