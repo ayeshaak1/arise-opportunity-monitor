@@ -30,7 +30,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4
+        pip install requests beautifulsoup4 pytest
     
     - name: Run unit tests
       env:
@@ -133,30 +133,30 @@ jobs:
         
         # Test that the monitor can be imported and basic functions work
         python -c "
-        import monitor
-        from bs4 import BeautifulSoup
-        html = open('test_page.html').read()
-        soup = BeautifulSoup(html, 'html.parser')
-        opps, has_opps = monitor.extract_opportunities(soup)
-        print(f'Extracted opportunities: {opps}')
-        print(f'Has opportunities: {has_opps}')
-        assert not has_opps, 'Should not have opportunities'
-        print('✅ Basic functionality test passed')
-                "
+import monitor
+from bs4 import BeautifulSoup
+html = open('test_page.html').read()
+soup = BeautifulSoup(html, 'html.parser')
+opps, has_opps = monitor.extract_opportunities(soup)
+print(f'Extracted opportunities: {opps}')
+print(f'Has opportunities: {has_opps}')
+assert not has_opps, 'Should not have opportunities'
+print('✅ Basic functionality test passed')
+        "
     
     - name: Validate workflow syntax
       run: |
         python -c "
-        # Test that the monitor can handle basic scenarios
-        import monitor
-        print('✅ Monitor module imports successfully')
-        
-        # Test email function structure
-        import inspect
-        sig = inspect.signature(monitor.send_email_notification)
-        print(f'Email function parameters: {list(sig.parameters.keys())}')
-        print('✅ Function signatures are correct')
-                "
+# Test that the monitor can handle basic scenarios
+import monitor
+print('✅ Monitor module imports successfully')
+
+# Test email function structure
+import inspect
+sig = inspect.signature(monitor.send_email_notification)
+print(f'Email function parameters: {list(sig.parameters.keys())}')
+print('✅ Function signatures are correct')
+        "
 
   notification:
     name: Test Status Notification
@@ -171,7 +171,7 @@ jobs:
         echo "Workflow: ${{ github.workflow }}"
         echo "Result: ${{ needs.test.result }}"
         
-        if [ "${{ needs.test.result }}" == "success" ]; then
+        if [ "${{ needs.test.result }}" = "success" ]; then
           echo "🎉 All tests passed!"
         else
           echo "❌ Some tests failed"
