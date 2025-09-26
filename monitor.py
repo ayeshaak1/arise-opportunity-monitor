@@ -18,7 +18,7 @@ REQUEST_TIMEOUT = 10  # seconds
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def send_email_notification(message):
+def send_email_notification(message, opportunity_details=None):
     """
     Sends an email notification using Gmail's SMTP server.
     """
@@ -31,7 +31,21 @@ def send_email_notification(message):
     msg['From'] = sender_email
     msg['To'] = receiver_email
     msg['Subject'] = "🚨 New Arise Opportunity Alert!"
-    msg.attach(MIMEText(message, 'plain'))
+    
+    # Build the email body
+    email_body = message + "\n\n"
+    
+    if opportunity_details:
+        email_body += "📋 OPPORTUNITY DETAILS:\n"
+        email_body += "=" * 50 + "\n"
+        for opportunity in opportunity_details:
+            email_body += f"• {opportunity}\n"
+        email_body += "\n"
+    
+    email_body += "🔗 Direct Link: https://link.arise.com/reference\n\n"
+    email_body += "This alert was triggered because opportunities changed from 'No Data' to available."
+
+    msg.attach(MIMEText(email_body, 'plain'))
 
     try:
         # Connect to Gmail's SMTP server and send the email
@@ -46,6 +60,49 @@ def send_email_notification(message):
     except Exception as e:
         logger.error(f"❌ Failed to send email: {e}")
         return False
+
+def extract_opportunities(soup):
+    """
+    Extract opportunity details from the Program Announcement section.
+    Returns a list of opportunity strings and a boolean indicating if opportunities exist.
+    """
+    opportunities = []
+    has_opportunities = False
+    
+    # Look for the Program Announcement widget
+    opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
+    
+    if opportunity_widget:
+        # Check if the "No Data" message is present
+        no_data_message = opportunity_widget.find('h4', class_='alert alert-warning')
+        
+        if no_data_message and "No Data" in no_data_message.get_text():
+            logger.info("📭 No opportunities found - 'No Data' message present")
+            return [], False
+        
+        # Look for opportunity rows in the table
+        table = opportunity_widget.find('table')
+        if table:
+            # Look for table rows (skip header row)
+            rows = table.find_all('tr')[1:]  # Skip the first header row
+            
+            for row in rows:
+                cells = row.find_all('td')
+                if len(cells) >= 3:  # Should have Opportunity, Download, File Name columns
+                    opportunity_name = cells[0].get_text(strip=True)
+                    file_name = cells[2].get_text(strip=True)
+                    
+                    if opportunity_name and opportunity_name != "No Data":
+                        opportunity_str = f"{opportunity_name} - {file_name}"
+                        opportunities.append(opportunity_str)
+                        has_opportunities = True
+            
+            if opportunities:
+                logger.info(f"🎯 Found {len(opportunities)} opportunities")
+            else:
+                logger.info("📭 No opportunity rows found in table")
+    
+    return opportunities, has_opportunities
 
 def check_for_changes():
     """
@@ -102,9 +159,9 @@ def check_for_changes():
     else:
         logger.warning("⚠️  No login credentials provided, accessing as guest")
 
-    # STEP 2: Access the opportunities page
+    # STEP 2: Access the references page
     target_url = "https://link.arise.com/reference"
-    logger.info("Fetching the opportunities page...")
+    logger.info("Fetching the references page...")
     
     try:
         page_response = session.get(target_url, timeout=REQUEST_TIMEOUT)
@@ -117,75 +174,97 @@ def check_for_changes():
         # Parse the HTML
         soup = BeautifulSoup(page_response.content, 'html.parser')
 
-        # STEP 3: Focus on the relevant section - try multiple selectors
-        content_to_hash = ""
+        # STEP 3: Extract opportunities from the Program Announcement section
+        current_opportunities, has_opportunities_now = extract_opportunities(soup)
         
-        # Try the specific widget first
-        opportunity_section = soup.find('div', id='opportunityannouncementwidget')
-        if opportunity_section:
-            content_to_hash = opportunity_section.get_text()
-            logger.info("✅ Found opportunity widget")
-        else:
-            # Try tables with opportunity data
-            tables = soup.find_all('table')
-            for table in tables:
-                table_text = table.get_text().lower()
-                if any(keyword in table_text for keyword in ['opportunity', 'announcement', 'program']):
-                    content_to_hash = table.get_text()
-                    logger.info("✅ Found opportunities in table")
-                    break
-            
-            # Fallback: use specific content areas
-            if not content_to_hash:
-                main_content = soup.find('div', {'class': ['body-container', 'content-inner']})
-                if main_content:
-                    content_to_hash = main_content.get_text()
-                else:
-                    content_to_hash = soup.find('body').get_text() if soup.find('body') else page_response.text
-                
-                logger.info("⚠️  Using fallback content extraction")
-
-        # STEP 4: Create a hash (fingerprint) of the content
-        current_hash = hashlib.md5(content_to_hash.encode('utf-8')).hexdigest()
-        logger.info(f"Current content hash: {current_hash}")
-
-        # STEP 5: Check against the previous hash
-        previous_hash = None
+        # STEP 4: Read previous state
+        previous_state = None
         try:
-            with open('previous_hash.txt', 'r') as f:
-                previous_hash = f.read().strip()
+            with open('previous_state.txt', 'r') as f:
+                previous_state = f.read().strip()
         except FileNotFoundError:
-            logger.info("No previous hash found. This is the first run.")
+            logger.info("No previous state found. This is the first run.")
 
-        # If it's the first run, just save the hash and exit.
-        if previous_hash is None:
-            with open('previous_hash.txt', 'w') as f:
-                f.write(current_hash)
-            logger.info("Initial hash saved. Monitoring will start on the next run.")
+        # STEP 5: Determine current state representation
+        # Use a simple string that represents the opportunity state
+        if has_opportunities_now:
+            current_state = "OPPORTUNITIES_AVAILABLE"
+            state_details = ",".join(current_opportunities)  # Store opportunity names for comparison
+        else:
+            current_state = "NO_DATA"
+            state_details = ""
+
+        current_state_hash = hashlib.md5(f"{current_state}:{state_details}".encode('utf-8')).hexdigest()
+
+        # If it's the first run, just save the state and exit
+        if previous_state is None:
+            with open('previous_state.txt', 'w') as f:
+                f.write(f"{current_state_hash}|{current_state}|{state_details}")
+            logger.info(f"💾 Initial state saved: {current_state}")
             return True
 
-        # STEP 6: Compare and notify
-        if current_hash != previous_hash:
+        # STEP 6: Parse previous state
+        try:
+            previous_hash, previous_state_str, previous_details = previous_state.split('|', 2)
+        except ValueError:
+            logger.error("❌ Corrupted previous state file")
+            previous_hash = ""
+            previous_state_str = ""
+            previous_details = ""
+
+        # STEP 7: Check for changes
+        change_detected = False
+        notification_message = ""
+        
+        if current_state_hash != previous_hash:
+            # State has changed
+            if current_state == "OPPORTUNITIES_AVAILABLE" and previous_state_str == "NO_DATA":
+                # This is what we're looking for! No Data → Opportunities Available
+                change_detected = True
+                notification_message = "🎉 NEW OPPORTUNITIES DETECTED! 🎉\n\nThe Program Announcement section has changed from 'No Data' to showing available opportunities."
+                logger.info("🚨 Change detected: No Data → Opportunities Available")
+                
+            elif current_state == "NO_DATA" and previous_state_str == "OPPORTUNITIES_AVAILABLE":
+                # Opportunities disappeared
+                change_detected = True
+                notification_message = "⚠️ Opportunities Removed\n\nAll opportunities have been removed from the Program Announcement section."
+                logger.info("⚠️ Change detected: Opportunities Available → No Data")
+                
+            else:
+                # Other state changes (opportunities changed but both states have opportunities)
+                change_detected = True
+                notification_message = "📊 Opportunities Updated\n\nThe available opportunities have changed."
+                logger.info("📊 Change detected: Opportunities updated")
+
+        # STEP 8: Handle notifications and state saving
+        if change_detected:
             logger.info("🎉 Change detected! Sending notification.")
-            notification_message = f"New Arise opportunity detected!\n\nPage: https://link.arise.com/reference\n\nContent preview: {content_to_hash[:500]}..."
-            send_email_notification(notification_message)
-            # Save the new hash for the next comparison
-            with open('previous_hash.txt', 'w') as f:
-                f.write(current_hash)
+            
+            # Only include opportunity details if we have opportunities now
+            opportunity_details = current_opportunities if has_opportunities_now else None
+            
+            send_email_notification(notification_message, opportunity_details)
+            
+            # Save the new state
+            with open('previous_state.txt', 'w') as f:
+                f.write(f"{current_state_hash}|{current_state}|{state_details}")
+                
+            logger.info("💾 New state saved")
             return True
         else:
-            logger.info("✅ No changes detected.")
+            logger.info("✅ No changes detected in opportunity status.")
             return True
             
     except Exception as e:
-        logger.error(f"Error monitoring page: {e}")
+        logger.error(f"❌ Error monitoring page: {e}")
         send_email_notification(f"Arise monitor error: {str(e)}")
         return False
 
 if __name__ == "__main__":
     # Check that required environment variables are set
     if not os.getenv('ARISE_USERNAME') or not os.getenv('ARISE_PASSWORD'):
-        logger.error("Error: Arise username or password not set.")
+        logger.error("❌ Error: Arise username or password not set.")
         sys.exit(1)
+    
     success = check_for_changes()
     sys.exit(0 if success else 1)
