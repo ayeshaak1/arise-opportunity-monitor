@@ -1,7 +1,6 @@
 # tests/test_check_for_changes.py
 import os
 import requests
-import builtins
 import monitor
 import pathlib
 
@@ -18,11 +17,15 @@ class MockResponse:
 
 class MockSession:
     """
-    When constructed, it reads the global variable CURRENT_HTML (set by test)
-    and returns that as the GET response.
+    A minimal stand-in for requests.Session used by the tests.
+    It exposes 'headers' (a dict) so session.headers.update(...) works,
+    and provides post/get methods returning MockResponse objects.
     """
     def __init__(self):
-        pass
+        # requests.Session has a headers dict attribute; mimic that
+        self.headers = {}
+        # allow test/code to set timeout attribute (monitor sets session.timeout)
+        self.timeout = None
 
     def post(self, url, data=None, allow_redirects=False):
         # Simulate successful login (redirect or set-cookie)
