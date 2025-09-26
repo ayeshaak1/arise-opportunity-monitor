@@ -260,11 +260,16 @@ def check_for_changes():
         send_email_notification(f"Arise monitor error: {str(e)}")
         return False
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for testing"""
     # Check that required environment variables are set
     if not os.getenv('ARISE_USERNAME') or not os.getenv('ARISE_PASSWORD'):
         logger.error("❌ Error: Arise username or password not set.")
-        sys.exit(1)
+        return False
     
     success = check_for_changes()
-    sys.exit(0 if success else 1)
+    return success
+
+if __name__ == "__main__":
+    sys.exit(0 if main() else 1)
+    
