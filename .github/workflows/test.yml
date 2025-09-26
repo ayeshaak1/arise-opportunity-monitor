@@ -1,4 +1,4 @@
-name: Run Tests
+name: Test Arise Monitor
 
 on:
   push:
@@ -6,170 +6,98 @@ on:
   pull_request:
     branches: [ main, master ]
   schedule:
-    # Run tests weekly to ensure everything still works
-    - cron: '0 0 * * 0'
+    - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight
 
 jobs:
   test:
-    name: Run Test Suite
+    name: Run Tests
     runs-on: ubuntu-latest
-    
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10"]
-    
+        python-version: [3.10, 3.11, 3.12]
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 pytest
-    
+        pip install -r requirements-test.txt
+
     - name: Run unit tests
-      env:
-        # Set test environment variables (these are fake for testing)
-        ARISE_USERNAME: test_user
-        ARISE_PASSWORD: test_password
-        GMAIL_ADDRESS: test@example.com
-        GMAIL_APP_PASSWORD: test_password
       run: |
-        # Try pytest first, fall back to unittest
-        if python -m pytest test_monitor.py -v; then
-          echo "✅ Tests passed with pytest"
-        else
-          echo "⚠️  pytest failed, trying unittest..."
-          python test_monitor.py
-        fi
-    
-    - name: Test code quality
-      run: |
-        # Basic syntax check
-        python -m py_compile monitor.py || echo "⚠️  monitor.py compilation warning"
-        python -m py_compile test_monitor.py || echo "⚠️  test_monitor.py compilation warning"
-        echo "✅ Syntax check completed"
-    
-    - name: Upload test results
-      uses: actions/upload-artifact@v4
-      if: always()
+        python -m pytest test_monitor.py -v --cov=monitor --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
       with:
-        name: test-results-${{ matrix.python-version }}
-        path: |
-          previous_state.txt
-        retention-days: 1
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: Test with environment variables
+      env:
+        ARISE_USERNAME: test-user
+        ARISE_PASSWORD: test-pass
+        GMAIL_ADDRESS: test@test.com
+        GMAIL_APP_PASSWORD: test-app-pass
+      run: |
+        python -c "import monitor; print('✅ Module imports successfully')"
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-test.txt
+
+    - name: Run integration tests
+      env:
+        ARISE_USERNAME: ${{ secrets.TEST_ARISE_USERNAME }}
+        ARISE_PASSWORD: ${{ secrets.TEST_ARISE_PASSWORD }}
+        GMAIL_ADDRESS: ${{ secrets.TEST_GMAIL_ADDRESS }}
+        GMAIL_APP_PASSWORD: ${{ secrets.TEST_GMAIL_APP_PASSWORD }}
+      run: |
+        python -m pytest test_monitor.py -v -k "integration" --tb=short
 
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
-    
-    - name: Check for secrets in code
-      run: |
-        # Basic check for hardcoded secrets
-        if grep -r "password\|secret\|key" --include="*.py" . | grep -v "test_" | grep -v "os.getenv" | grep -v "#"; then
-          echo "⚠️  Potential hardcoded secrets found"
-          # Don't fail the build for this, just warn
-          grep -r "password\|secret\|key" --include="*.py" . | grep -v "test_" | grep -v "os.getenv" | grep -v "#" || true
-        else
-          echo "✅ No obvious hardcoded secrets found"
-        fi
-    
-    - name: Bandit security scan
+        python-version: '3.11'
+
+    - name: Bandit Security Scan
       run: |
         pip install bandit
-        bandit -r . -f txt -o bandit-report.txt || echo "Bandit scan completed with warnings"
+        bandit -r . -f html -o bandit-report.html || true
 
-  monitor-integration:
-    name: Monitor Integration Test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Upload security report
+      uses: actions/upload-artifact@v3
       with:
-        python-version: '3.10'
-    
-    - name: Install dependencies
-      run: |
-        pip install requests beautifulsoup4
-    
-    - name: Test monitor in dry-run mode
-      env:
-        ARISE_USERNAME: test_user
-        ARISE_PASSWORD: test_password
-        GMAIL_ADDRESS: test@example.com
-        GMAIL_APP_PASSWORD: test_password
-      run: |
-        # Create a test HTML file to simulate the website
-        cat > test_page.html << 'EOF'
-        <div id="opportunityannouncementwidget">
-            <h4 class="alert alert-warning">No Data</h4>
-        </div>
-        EOF
-        
-        # Test that the monitor can be imported and basic functions work
-        python -c "
-        import monitor
-        from bs4 import BeautifulSoup
-        html = open('test_page.html').read()
-        soup = BeautifulSoup(html, 'html.parser')
-        opps, has_opps = monitor.extract_opportunities(soup)
-        print(f'Extracted opportunities: {opps}')
-        print(f'Has opportunities: {has_opps}')
-        assert not has_opps, 'Should not have opportunities'
-        print('✅ Basic functionality test passed')
-        "
-    
-    - name: Validate workflow syntax
-      run: |
-        python -c "
-        # Test that the monitor can handle basic scenarios
-        import monitor
-        print('✅ Monitor module imports successfully')
-        
-        # Test email function structure
-        import inspect
-        sig = inspect.signature(monitor.send_email_notification)
-        print(f'Email function parameters: {list(sig.parameters.keys())}')
-        print('✅ Function signatures are correct')
-        "
-
-  notification:
-    name: Test Status Notification
-    runs-on: ubuntu-latest
-    if: always()
-    needs: [test, security-scan, monitor-integration]  # Add this line
-    
-    steps:
-    - name: Notify test status
-      run: |
-        echo "Tests completed for ${{ github.sha }}"
-        echo "Workflow: ${{ github.workflow }}"
-        echo "Job status:"
-        echo "- Test: ${{ needs.test.result }}"
-        echo "- Security: ${{ needs.security-scan.result }}"
-        echo "- Integration: ${{ needs.monitor-integration.result }}"
-        
-        if [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.security-scan.result }}" = "success" ] && [ "${{ needs.monitor-integration.result }}" = "success" ]; then
-          echo "🎉 All tests passed!"
-        else
-          echo "❌ Some tests failed or were skipped"
-        fi
+        name: security-report
+        path: bandit-report.html
