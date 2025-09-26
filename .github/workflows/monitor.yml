@@ -23,12 +23,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4
         
-    - name: Restore previous hash from cache
+    - name: Restore previous state from cache
       uses: actions/cache@v3
       with:
-        path: previous_hash.txt
-        key: arise-hash-${{ github.ref }}
-        
+        path: previous_state.txt
+        key: arise-state-${{ github.ref }}
+
     - name: Run monitor
       env:
         ARISE_USERNAME: ${{ secrets.ARISE_USERNAME }}
@@ -36,9 +36,10 @@ jobs:
         GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
         GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       run: python monitor.py
-      
-    - name: Save hash to cache
+
+    - name: Save state to cache
       uses: actions/cache@v3
       with:
-        path: previous_hash.txt
-        key: arise-hash-${{ github.ref }}
+        path: previous_state.txt
+        key: arise-state-${{ github.ref }}
+
