@@ -1,16 +1,13 @@
-#!/usr/bin/env python3
-"""
-Test suite for Arise Opportunity Monitor
-"""
+ Add the current directory to Python path to import monitor
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import unittest
-import os
-import tempfile
-import shutil
-from unittest.mock import patch, MagicMock
-from monitor import extract_opportunities, check_for_changes, send_email_notification
-from bs4 import BeautifulSoup
-import hashlib
+try:
+    from monitor import extract_opportunities, check_for_changes, send_email_notification
+    from bs4 import BeautifulSoup
+    import hashlib
+except ImportError as e:
+    print(f"Import error: {e}")
+    print("Some tests may be skipped due to missing dependencies")
 
 class TestExtractOpportunities(unittest.TestCase):
     """Test the opportunity extraction function"""
@@ -289,9 +286,17 @@ class TestErrorHandling(unittest.TestCase):
 
 def run_tests():
     """Run all tests and return results"""
+    # Check if required dependencies are available
+    try:
+        import requests
+        import bs4
+    except ImportError:
+        print("Skipping tests: Required dependencies not installed")
+        return False
+    
     # Create a test suite
     loader = unittest.TestLoader()
-    suite = loader.loadTestsFromModule(__name__)
+    suite = loader.loadTestsFromModule(sys.modules[__name__])
     
     # Run the tests
     runner = unittest.TextTestRunner(verbosity=2)
@@ -303,4 +308,6 @@ def run_tests():
 if __name__ == '__main__':
     # Run tests when script is executed directly
     success = run_tests()
+    sys.exit(0 if success else 1)
+
     exit(0 if success else 1)
