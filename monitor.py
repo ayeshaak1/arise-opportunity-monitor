@@ -237,7 +237,7 @@ def check_for_changes():
                 logger.info("📊 Change detected: Opportunities updated")
 
         # STEP 8: Handle notifications and state saving
-        if !change_detected:
+        if change_detected or True:
             logger.info("🎉 Change detected! Sending notification.")
             
             # Only include opportunity details if we have opportunities now
