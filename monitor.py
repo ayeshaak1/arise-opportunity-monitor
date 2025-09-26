@@ -260,16 +260,14 @@ def check_for_changes():
         send_email_notification(f"Arise monitor error: {str(e)}")
         return False
 
-def main():
-    """Main entry point for testing"""
+if __name__ == "__main__":
     # Check that required environment variables are set
-    if not os.getenv('ARISE_USERNAME') or not os.getenv('ARISE_PASSWORD'):
-        logger.error("❌ Error: Arise username or password not set.")
-        return False
+    required_vars = ['ARISE_USERNAME', 'ARISE_PASSWORD']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        logger.error(f"❌ Error: Missing required environment variables: {', '.join(missing_vars)}")
+        sys.exit(1)
     
     success = check_for_changes()
-    return success
-
-if __name__ == "__main__":
-    sys.exit(0 if main() else 1)
-    
+    sys.exit(0 if success else 1)
