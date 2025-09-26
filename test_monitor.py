@@ -1,4 +1,16 @@
- Add the current directory to Python path to import monitor
+#!/usr/bin/env python3
+"""
+Test suite for Arise Opportunity Monitor
+"""
+
+import unittest
+import os
+import tempfile
+import shutil
+from unittest.mock import patch, MagicMock
+import sys
+
+# Add the current directory to Python path to import monitor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
@@ -309,5 +321,3 @@ if __name__ == '__main__':
     # Run tests when script is executed directly
     success = run_tests()
     sys.exit(0 if success else 1)
-
-    exit(0 if success else 1)
