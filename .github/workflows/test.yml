@@ -136,7 +136,7 @@ jobs:
         print(f'Has opportunities: {has_opps}')
         assert not has_opps, 'Should not have opportunities'
         print('✅ Basic functionality test passed')
-                "
+        "
     
     - name: Validate workflow syntax
       run: |
@@ -150,12 +150,13 @@ jobs:
         sig = inspect.signature(monitor.send_email_notification)
         print(f'Email function parameters: {list(sig.parameters.keys())}')
         print('✅ Function signatures are correct')
-                "
+        "
 
   notification:
     name: Test Status Notification
     runs-on: ubuntu-latest
     if: always()
+    needs: [test, security-scan, monitor-integration]  # Add this line
     
     steps:
     - name: Notify test status
@@ -163,11 +164,11 @@ jobs:
         echo "Tests completed for ${{ github.sha }}"
         echo "Workflow: ${{ github.workflow }}"
         echo "Job status:"
-        echo "- Test: ${{ jobs.test.result }}"
-        echo "- Security: ${{ jobs.security-scan.result }}"
-        echo "- Integration: ${{ jobs.monitor-integration.result }}"
+        echo "- Test: ${{ needs.test.result }}"
+        echo "- Security: ${{ needs.security-scan.result }}"
+        echo "- Integration: ${{ needs.monitor-integration.result }}"
         
-        if [ "${{ jobs.test.result }}" = "success" ] && [ "${{ jobs.security-scan.result }}" = "success" ] && [ "${{ jobs.monitor-integration.result }}" = "success" ]; then
+        if [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.security-scan.result }}" = "success" ] && [ "${{ needs.monitor-integration.result }}" = "success" ]; then
           echo "🎉 All tests passed!"
         else
           echo "❌ Some tests failed or were skipped"
