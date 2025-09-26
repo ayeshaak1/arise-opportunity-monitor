@@ -1,12 +1,10 @@
 name: CI
 
-# Triggers — required. Without these GitHub shows "No event triggers defined in `on`"
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  # Allows manual runs from the Actions UI
   workflow_dispatch:
 
 jobs:
@@ -27,13 +25,17 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; else echo "No requirements-dev.txt found"; fi
 
+      - name: Ensure repo root is on PYTHONPATH
+        # This makes Python import modules from repo root (so `import monitor` works)
+        run: echo "PYTHONPATH=$(pwd)" >> $GITHUB_ENV
+
       - name: Run tests
         run: |
           mkdir -p artifacts
           pytest
 
       - name: Upload pytest JUnit result
-        if: always()   # upload even if tests fail
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-junit
