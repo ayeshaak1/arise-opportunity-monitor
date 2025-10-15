@@ -108,7 +108,12 @@ class TestEmailNotification:
             mock_server = Mock()
             mock_smtp.return_value = mock_server
             
-            result = monitor.send_email_notification("Test message", ["Opp 1", "Opp 2"])
+            # Test with all parameters including change_type
+            result = monitor.send_email_notification(
+                "Test message", 
+                ["Opp 1", "Opp 2"],
+                "new_opportunities"
+            )
             
             assert result == True
             mock_smtp.assert_called_once_with('smtp.gmail.com', 587)
@@ -125,6 +130,31 @@ class TestEmailNotification:
         result = monitor.send_email_notification("Test message")
         
         assert result == False
+
+    @patch('monitor.smtplib.SMTP')
+    def test_send_email_notification_different_change_types(self, mock_smtp):
+        """Test email sending with different change types"""
+        with patch.dict(os.environ, {
+            'GMAIL_ADDRESS': 'test@example.com',
+            'GMAIL_APP_PASSWORD': 'testpass'
+        }):
+            mock_server = Mock()
+            mock_smtp.return_value = mock_server
+            
+            # Test different change types
+            change_types = [
+                "new_opportunities",
+                "opportunities_removed", 
+                "opportunities_updated",
+                "error"
+            ]
+            
+            for change_type in change_types:
+                result = monitor.send_email_notification(
+                    f"Test {change_type}",
+                    change_type=change_type
+                )
+                assert result == True
 
 class TestStateManagement:
     def test_state_transition_detection(self):
@@ -199,7 +229,35 @@ class TestIntegration:
             result = monitor.check_for_changes()
             
             assert result == False
+            # Check that send_email_notification was called with error change_type
             mock_email.assert_called_once()
+            # Get the arguments from the call
+            call_args = mock_email.call_args
+            # The third argument should be change_type="error"
+            assert call_args[1].get('change_type') == 'error'
+
+    def test_state_transitions_with_change_types(self, mock_file, mock_email, mock_session):
+        """Test that different state transitions use correct change types"""
+        mock_session_instance = Mock()
+        mock_session.return_value = mock_session_instance
+        mock_session_instance.post.return_value.status_code = 200
+        mock_session_instance.get.return_value.status_code = 200
+        
+        with patch.dict(os.environ, {
+            'ARISE_USERNAME': 'testuser',
+            'ARISE_PASSWORD': 'testpass'
+        }):
+            # Test 1: NO_DATA -> OPPORTUNITIES_AVAILABLE should use "new_opportunities"
+            mock_file.return_value.read.return_value = f"{hashlib.md5(b'NO_DATA:').hexdigest()}|NO_DATA|"
+            mock_session_instance.get.return_value.content = HTML_WITH_OPPORTUNITIES.encode()
+            
+            result = monitor.check_for_changes()
+            assert result == True
+            
+            # Check that email was called with new_opportunities change_type
+            mock_email.assert_called_once()
+            call_kwargs = mock_email.call_args[1]
+            assert call_kwargs.get('change_type') == 'new_opportunities'
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
