@@ -18,19 +18,34 @@ REQUEST_TIMEOUT = 10  # seconds
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def send_email_notification(message, opportunity_details=None):
+def send_email_notification(message, opportunity_details=None, change_type="new_opportunities"):
     """
     Sends an email notification using Gmail's SMTP server.
+    
+    Args:
+        message: The email body content
+        opportunity_details: List of opportunity details
+        change_type: Type of change detected - determines the subject line
+                   ("new_opportunities", "opportunities_removed", "opportunities_updated", "error")
     """
     sender_email = os.getenv('GMAIL_ADDRESS')
     sender_password = os.getenv('GMAIL_APP_PASSWORD')
     receiver_email = sender_email  # Send the alert to yourself
 
-    # Create the email message
+    # Create the email message with specific subject based on change type
     msg = MIMEMultipart()
     msg['From'] = sender_email
     msg['To'] = receiver_email
-    msg['Subject'] = "🚨 New Arise Opportunity Alert!"
+    
+    # Different subject lines based on the type of change
+    subject_lines = {
+        "new_opportunities": "🎉 NEW Arise Opportunities Available!",
+        "opportunities_removed": "⚠️ Arise Opportunities Removed", 
+        "opportunities_updated": "📊 Arise Opportunities Updated",
+        "error": "❌ Arise Monitor Error"
+    }
+    
+    msg['Subject'] = subject_lines.get(change_type, "🚨 Arise Opportunity Alert")
     
     # Build the email body
     email_body = message + "\n\n"
@@ -43,7 +58,16 @@ def send_email_notification(message, opportunity_details=None):
         email_body += "\n"
     
     email_body += "🔗 Direct Link: https://link.arise.com/reference\n\n"
-    email_body += "This alert was triggered because opportunities changed from 'No Data' to available."
+    
+    # Different footer messages based on change type
+    if change_type == "new_opportunities":
+        email_body += "This alert was triggered because new opportunities became available!"
+    elif change_type == "opportunities_removed":
+        email_body += "All previous opportunities have been removed from the Program Announcement section."
+    elif change_type == "opportunities_updated":
+        email_body += "The available opportunities have been updated or modified."
+    else:
+        email_body += "This is an automated alert from your Arise Opportunity Monitor."
 
     msg.attach(MIMEText(email_body, 'plain'))
 
@@ -215,26 +239,46 @@ def check_for_changes():
         # STEP 7: Check for changes
         change_detected = False
         notification_message = ""
+        change_type = "opportunities_updated"  # default
         
         if current_state_hash != previous_hash:
             # State has changed
             if current_state == "OPPORTUNITIES_AVAILABLE" and previous_state_str == "NO_DATA":
                 # This is what we're looking for! No Data → Opportunities Available
                 change_detected = True
+                change_type = "new_opportunities"
                 notification_message = "🎉 NEW OPPORTUNITIES DETECTED! 🎉\n\nThe Program Announcement section has changed from 'No Data' to showing available opportunities."
                 logger.info("🚨 Change detected: No Data → Opportunities Available")
                 
             elif current_state == "NO_DATA" and previous_state_str == "OPPORTUNITIES_AVAILABLE":
                 # Opportunities disappeared
                 change_detected = True
+                change_type = "opportunities_removed"
                 notification_message = "⚠️ Opportunities Removed\n\nAll opportunities have been removed from the Program Announcement section."
                 logger.info("⚠️ Change detected: Opportunities Available → No Data")
                 
             else:
                 # Other state changes (opportunities changed but both states have opportunities)
                 change_detected = True
+                change_type = "opportunities_updated"
                 notification_message = "📊 Opportunities Updated\n\nThe available opportunities have changed."
                 logger.info("📊 Change detected: Opportunities updated")
+        
+        # STEP 8: Handle notifications and state saving
+        if change_detected:
+            logger.info("🎉 Change detected! Sending notification.")
+            
+            # Only include opportunity details if we have opportunities now
+            opportunity_details = current_opportunities if has_opportunities_now else None
+            
+            send_email_notification(notification_message, opportunity_details, change_type)
+            
+            # Save the new state
+            with open('previous_state.txt', 'w') as f:
+                f.write(f"{current_state_hash}|{current_state}|{state_details}")
+                
+            logger.info("💾 New state saved")
+            return True
 
         # STEP 8: Handle notifications and state saving
         if change_detected:
@@ -257,7 +301,7 @@ def check_for_changes():
             
     except Exception as e:
         logger.error(f"❌ Error monitoring page: {e}")
-        send_email_notification(f"Arise monitor error: {str(e)}")
+        send_email_notification(f"Arise monitor error: {str(e)}", change_type="error")
         return False
 
 if __name__ == "__main__":
