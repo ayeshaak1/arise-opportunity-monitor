@@ -47,9 +47,9 @@ def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
     monkeypatch.setattr(requests, "Session", lambda: MockSession())
 
     notifications = []
-    # Replace real email sending so tests don't send email
-    def fake_send_email_notification(message, opportunity_details=None):
-        notifications.append((message, opportunity_details))
+    # Replace real email sending so tests don't send email - UPDATED for change_type parameter
+    def fake_send_email_notification(message, opportunity_details=None, change_type=None):
+        notifications.append((message, opportunity_details, change_type))
         return True
     monkeypatch.setattr(monitor, "send_email_notification", fake_send_email_notification)
 
@@ -83,7 +83,61 @@ def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
     assert monitor.check_for_changes() is True
     # Now notifications should have one entry for the transition
     assert len(notifications) == 1
-    message, details = notifications[0]
+    message, details, change_type = notifications[0]
     assert "NEW OPPORTUNITIES" in message or "NEW" in message or "Opportunities" in message
     assert details is not None
     assert any("Opportunity B" in item for item in details)
+    assert change_type == "new_opportunities"  # Should use the new change type
+
+def test_flow_opportunities_to_no_data(tmp_path, monkeypatch):
+    """Test the transition from opportunities back to no data"""
+    monkeypatch.chdir(tmp_path)
+
+    # Provide dummy credentials
+    monkeypatch.setenv("ARISE_USERNAME", "dummy")
+    monkeypatch.setenv("ARISE_PASSWORD", "dummy")
+
+    # Replace requests.Session with our mock
+    monkeypatch.setattr(requests, "Session", lambda: MockSession())
+
+    notifications = []
+    # Updated fake function with change_type parameter
+    def fake_send_email_notification(message, opportunity_details=None, change_type=None):
+        notifications.append((message, opportunity_details, change_type))
+        return True
+    monkeypatch.setattr(monitor, "send_email_notification", fake_send_email_notification)
+
+    # 1) First run: page shows opportunities
+    os.environ["CURRENT_HTML"] = """
+    <div id="opportunityannouncementwidget">
+      <table>
+        <tr><th>Opportunity</th><th>Download</th><th>File Name</th></tr>
+        <tr>
+          <td>Opportunity A</td>
+          <td><a href="#">Download</a></td>
+          <td>oppA.pdf</td>
+        </tr>
+      </table>
+    </div>
+    """
+    assert monitor.check_for_changes() is True
+    # Save the state for next run
+    p = tmp_path / "previous_state.txt"
+    assert p.exists()
+    
+    # Clear notifications from first run
+    notifications.clear()
+
+    # 2) Second run: page now shows "No Data" -> should trigger opportunities_removed notification
+    os.environ["CURRENT_HTML"] = """
+    <div id="opportunityannouncementwidget">
+      <h4 class="alert alert-warning">No Data</h4>
+    </div>
+    """
+    assert monitor.check_for_changes() is True
+    
+    # Should have one notification for opportunities removed
+    assert len(notifications) == 1
+    message, details, change_type = notifications[0]
+    assert "Opportunities Removed" in message or "removed" in message.lower()
+    assert change_type == "opportunities_removed"
