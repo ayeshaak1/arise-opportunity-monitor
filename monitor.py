@@ -119,19 +119,32 @@ def extract_opportunities_from_script_tags(soup):
             # The opportunities might be in data-bind attributes or other JavaScript objects
             if 'opportunityAnnouncementData' in script_content:
                 logger.info("Found opportunityAnnouncementData in script")
-                # Try to extract the array data
-                match = re.search(r'opportunityAnnouncementData\s*:\s*(\[.*?\])', script_content, re.DOTALL)
-                if match:
-                    try:
-                        opportunity_data = json.loads(match.group(1))
-                        for opp in opportunity_data:
-                            if 'OpportunityName' in opp and 'FileName' in opp:
-                                opportunity_str = f"{opp['OpportunityName']} - {opp['FileName']}"
-                                opportunities.append(opportunity_str)
-                                has_opportunities = True
-                        logger.info(f"Extracted {len(opportunities)} opportunities from script data")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Could not parse opportunity data: {e}")
+                # Try to extract the array data - match both assignment patterns
+                patterns = [
+                    r'opportunityAnnouncementData\s*:\s*(\[.*?\])\s*,',  # Object property
+                    r'opportunityAnnouncementData\s*=\s*(\[.*?\])\s*;',  # Variable assignment
+                    r'"opportunityAnnouncementData"\s*:\s*(\[.*?\])\s*,',  # Quoted property
+                ]
+                
+                for pattern in patterns:
+                    match = re.search(pattern, script_content, re.DOTALL)
+                    if match:
+                        try:
+                            opportunity_data_str = match.group(1)
+                            # Clean up the string
+                            opportunity_data_str = re.sub(r',\s*\]', ']', opportunity_data_str)  # Remove trailing commas
+                            opportunity_data = json.loads(opportunity_data_str)
+                            
+                            for opp in opportunity_data:
+                                if 'OpportunityName' in opp and 'FileName' in opp:
+                                    opportunity_str = f"{opp['OpportunityName']} - {opp['FileName']}"
+                                    opportunities.append(opportunity_str)
+                                    has_opportunities = True
+                            logger.info(f"Extracted {len(opportunities)} opportunities from script data")
+                            break  # Stop after first successful pattern
+                        except (json.JSONDecodeError, KeyError, IndexError) as e:
+                            logger.warning(f"Could not parse opportunity data with pattern {pattern}: {e}")
+                            continue
     
     return opportunities, has_opportunities
 
@@ -147,7 +160,7 @@ def extract_opportunities_from_dynamic_content(soup):
     
     if opportunity_widget:
         # Check if the "No Data" message is present
-        no_data_elements = opportunity_widget.find_all(text=re.compile('No Data'))
+        no_data_elements = opportunity_widget.find_all(string=re.compile('No Data'))  # FIXED: text -> string
         if no_data_elements:
             logger.info("📭 No opportunities found - 'No Data' message present")
             return [], False
@@ -189,8 +202,8 @@ def extract_opportunities_from_dynamic_content(soup):
     # Method 3: Look for any text that might indicate opportunities
     if not has_opportunities:
         # Check if there are any download links or opportunity-related text
-        download_links = soup.find_all('a', text=re.compile(r'download|Download', re.IGNORECASE))
-        opportunity_text = soup.find_all(text=re.compile(r'opportunity|Opportunity', re.IGNORECASE))
+        download_links = soup.find_all('a', string=re.compile(r'download|Download', re.IGNORECASE))  # FIXED: text -> string
+        opportunity_text = soup.find_all(string=re.compile(r'opportunity|Opportunity', re.IGNORECASE))  # FIXED: text -> string
         
         if download_links or opportunity_text:
             logger.info("Found opportunity-related elements but couldn't parse structured data")
