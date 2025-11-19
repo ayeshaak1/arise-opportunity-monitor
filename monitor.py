@@ -12,7 +12,7 @@ import requests.packages.urllib3
 requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for speed
 
 # Set shorter timeouts for faster failure
-REQUEST_TIMEOUT = 10  # seconds
+REQUEST_TIMEOUT = 30  # Increased timeout for login
 
 # Set up logging to see what's happening
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -101,8 +101,35 @@ def extract_opportunities(soup):
         return [], False
     else:
         logger.info("🎯 No 'No Data' message found - OPPORTUNITIES AVAILABLE!")
-        # Return a generic message since we know opportunities exist but don't have details
-        return ["New opportunities available - check Arise portal for details"], True
+        # Try to extract opportunity details from tables
+        opportunities = extract_opportunity_details(opportunity_widget)
+        if not opportunities:
+            opportunities = ["New opportunities available - check Arise portal for details"]
+        return opportunities, True
+
+def extract_opportunity_details(widget):
+    """
+    Try to extract specific opportunity details from tables
+    """
+    opportunities = []
+    
+    # Look for tables in the widget
+    tables = widget.find_all('table')
+    for table in tables:
+        # Look for table rows (skip header row)
+        rows = table.find_all('tr')[1:]  # Skip the first header row
+        
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) >= 3:  # Should have Opportunity, Download, File Name columns
+                opportunity_name = cells[0].get_text(strip=True)
+                file_name = cells[2].get_text(strip=True)
+                
+                if opportunity_name and opportunity_name != "No Data":
+                    opportunity_str = f"{opportunity_name} - {file_name}"
+                    opportunities.append(opportunity_str)
+    
+    return opportunities
 
 def check_for_changes():
     """
@@ -112,61 +139,99 @@ def check_for_changes():
     session = requests.Session()
     session.timeout = REQUEST_TIMEOUT
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
     })
 
     # Get credentials from environment variables
     arise_username = os.getenv('ARISE_USERNAME')
     arise_password = os.getenv('ARISE_PASSWORD')
 
-    # STEP 1: Try multiple login approaches
+    if not arise_username or not arise_password:
+        logger.error("❌ Missing ARISE_USERNAME or ARISE_PASSWORD environment variables")
+        return False
+
+    # STEP 1: Improved login process
     login_successful = False
     
-    if arise_username and arise_password:
-        logger.info("Attempting to log in...")
-        
-        # Try different login endpoints and form fields
-        login_attempts = [
-            {
-                'url': 'https://link.arise.com/Account/Login',
-                'data': {'username': arise_username, 'password': arise_password}
-            },
-            {
-                'url': 'https://link.arise.com/login', 
-                'data': {'email': arise_username, 'password': arise_password}
-            },
-            {
-                'url': 'https://link.arise.com/',
-                'data': {'Username': arise_username, 'Password': arise_password}
-            }
-        ]
-        
-        for attempt in login_attempts:
-            try:
-                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=True, timeout=REQUEST_TIMEOUT)
-                # Check for successful login by looking for dashboard elements or absence of login form
-                if response.status_code == 200:
-                    # Check if we're still on a login page or successfully logged in
-                    if 'login' not in response.url.lower() and 'signin' not in response.url.lower():
+    logger.info("Attempting to log in...")
+    
+    # First, get the login page to capture any CSRF tokens or session cookies
+    try:
+        login_page_response = session.get('https://link.arise.com/Account/Login', timeout=REQUEST_TIMEOUT)
+        logger.info(f"Got login page: {login_page_response.status_code}")
+    except Exception as e:
+        logger.warning(f"Could not get login page: {e}")
+
+    # Try multiple login approaches with different form fields
+    login_attempts = [
+        {
+            'url': 'https://link.arise.com/Account/Login',
+            'data': {'username': arise_username, 'password': arise_password}
+        },
+        {
+            'url': 'https://link.arise.com/Account/Login', 
+            'data': {'Email': arise_username, 'Password': arise_password}
+        },
+        {
+            'url': 'https://link.arise.com/',
+            'data': {'Username': arise_username, 'Password': arise_password}
+        },
+        {
+            'url': 'https://link.arise.com/login',
+            'data': {'email': arise_username, 'password': arise_password}
+        }
+    ]
+    
+    for attempt in login_attempts:
+        try:
+            logger.info(f"Trying login at {attempt['url']} with data: {list(attempt['data'].keys())}")
+            
+            response = session.post(
+                attempt['url'], 
+                data=attempt['data'], 
+                allow_redirects=True,  # Follow redirects
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            # Check if login was successful by looking for specific elements on the page
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Check if we're on a logged-in page by looking for specific elements
+                logged_in_indicators = [
+                    soup.find('a', href='/account/logout'),  # Logout link
+                    soup.find('div', id='opportunityannouncementwidget'),  # The widget we want
+                    soup.find('a', string=lambda x: x and 'logout' in x.lower() if x else False),  # Any logout text
+                ]
+                
+                if any(logged_in_indicators):
+                    login_successful = True
+                    logger.info("✅ Login successful! Found logged-in indicators.")
+                    break
+                else:
+                    # Check if we're still on a login page
+                    login_forms = soup.find_all('form', {'action': lambda x: x and 'login' in x.lower() if x else False})
+                    if not login_forms:
                         login_successful = True
-                        logger.info("✅ Login successful!")
+                        logger.info("✅ Login successful! No login forms found.")
                         break
                     else:
-                        # Parse response to check if login form is still present
-                        soup = BeautifulSoup(response.content, 'html.parser')
-                        login_forms = soup.find_all('form', {'action': lambda x: x and ('login' in x.lower() or 'signin' in x.lower())})
-                        if not login_forms:
-                            login_successful = True
-                            logger.info("✅ Login successful!")
-                            break
-            except Exception as e:
-                logger.warning(f"Login attempt failed: {e}")
-                continue
-                
-        if not login_successful:
-            logger.warning("⚠️  Login attempts failed, but will try to access page anyway")
-    else:
-        logger.warning("⚠️  No login credentials provided, accessing as guest")
+                        logger.info("❌ Still on login page, trying next method...")
+            
+        except Exception as e:
+            logger.warning(f"Login attempt failed: {e}")
+            continue
+    
+    if not login_successful:
+        logger.error("❌ All login attempts failed!")
+        # Try to access the page anyway - sometimes the session might still work
+        logger.info("⚠️  Will try to access reference page anyway...")
 
     # STEP 2: Access the references page
     target_url = "https://link.arise.com/reference"
@@ -174,6 +239,13 @@ def check_for_changes():
     
     try:
         page_response = session.get(target_url, timeout=REQUEST_TIMEOUT)
+        logger.info(f"Reference page status: {page_response.status_code}")
+        
+        # Save the page content for debugging if needed
+        with open('debug_page.html', 'w', encoding='utf-8') as f:
+            f.write(page_response.text)
+        logger.info("💾 Saved page content to debug_page.html for inspection")
+        
         page_response.raise_for_status()  # Raises an exception for bad status codes
         
         if page_response.status_code != 200:
@@ -182,6 +254,21 @@ def check_for_changes():
 
         # Parse the HTML
         soup = BeautifulSoup(page_response.content, 'html.parser')
+
+        # Check if we're actually logged in by looking for the widget
+        opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
+        if not opportunity_widget:
+            logger.error("❌ Cannot find opportunity widget. Likely not logged in.")
+            # Check if we're being redirected to login
+            if 'login' in page_response.url.lower():
+                logger.error("❌ Redirected to login page - authentication failed")
+                send_email_notification(
+                    "Arise monitor authentication failed - check your credentials", 
+                    change_type="error"
+                )
+                return False
+            else:
+                logger.warning("⚠️  Widget not found but not on login page. Continuing...")
 
         # STEP 3: Extract opportunities using SIMPLE "No Data" check
         current_opportunities, has_opportunities_now = extract_opportunities(soup)
@@ -275,7 +362,7 @@ def check_for_changes():
 
 if __name__ == "__main__":
     # Check that required environment variables are set
-    required_vars = ['ARISE_USERNAME', 'ARISE_PASSWORD']
+    required_vars = ['ARISE_USERNAME', 'ARISE_PASSWORD', 'GMAIL_ADDRESS', 'GMAIL_APP_PASSWORD']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
