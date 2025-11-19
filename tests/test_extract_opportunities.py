@@ -30,7 +30,8 @@ def test_extract_table_opportunity():
     opportunities, has = monitor.extract_opportunities(soup)
     assert has is True
     assert len(opportunities) == 1
-    assert "New opportunities available" in opportunities[0]
+    # Now we expect the actual opportunity details, not the generic message
+    assert opportunities[0] == "Opportunity A - oppA.pdf"
 
 def test_extract_generic_opportunities():
     """Test that ANY content without 'No Data' means opportunities exist"""
@@ -43,6 +44,7 @@ def test_extract_generic_opportunities():
     soup = BeautifulSoup(html, "html.parser")
     opportunities, has = monitor.extract_opportunities(soup)
     assert has is True
+    # When no specific opportunities can be extracted, we should get the generic message
     assert "New opportunities available" in opportunities[0]
 
 def test_extract_empty_widget():
