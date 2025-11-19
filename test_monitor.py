@@ -130,11 +130,21 @@ class TestIntegration:
         mock_session_instance = Mock()
         mock_session.return_value = mock_session_instance
         
-        # Mock successful login
-        mock_session_instance.post.return_value.status_code = 200
-        mock_session_instance.post.return_value.url = "https://link.arise.com/dashboard"
-        mock_session_instance.get.return_value.status_code = 200
-        mock_session_instance.get.return_value.content = HTML_WITH_NO_DATA.encode()
+        # Mock successful login - ensure response has text attribute
+        mock_post_response = Mock()
+        mock_post_response.status_code = 200
+        mock_post_response.url = "https://link.arise.com/dashboard"
+        mock_post_response.text = ""
+        mock_post_response.content = b""
+        
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200
+        mock_get_response.text = HTML_WITH_NO_DATA
+        mock_get_response.content = HTML_WITH_NO_DATA.encode()
+        mock_get_response.url = "https://link.arise.com/reference"
+        
+        mock_session_instance.post.return_value = mock_post_response
+        mock_session_instance.get.return_value = mock_get_response
         
         # Mock previous state file
         mock_file.return_value.read.return_value = "old_hash|NO_DATA|"
@@ -153,9 +163,22 @@ class TestIntegration:
         """Test that different state transitions use correct change types"""
         mock_session_instance = Mock()
         mock_session.return_value = mock_session_instance
-        mock_session_instance.post.return_value.status_code = 200
-        mock_session_instance.post.return_value.url = "https://link.arise.com/dashboard"
-        mock_session_instance.get.return_value.status_code = 200
+        
+        # Mock responses with text attribute
+        mock_post_response = Mock()
+        mock_post_response.status_code = 200
+        mock_post_response.url = "https://link.arise.com/dashboard"
+        mock_post_response.text = ""
+        mock_post_response.content = b""
+        
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200
+        mock_get_response.text = HTML_WITH_OPPORTUNITIES
+        mock_get_response.content = HTML_WITH_OPPORTUNITIES.encode()
+        mock_get_response.url = "https://link.arise.com/reference"
+        
+        mock_session_instance.post.return_value = mock_post_response
+        mock_session_instance.get.return_value = mock_get_response
         
         with patch.dict(os.environ, {
             'ARISE_USERNAME': 'testuser',
@@ -163,7 +186,6 @@ class TestIntegration:
         }):
             # Test NO_DATA -> OPPORTUNITIES_AVAILABLE should use "new_opportunities"
             mock_file.return_value.read.return_value = f"{hashlib.md5(b'NO_DATA:').hexdigest()}|NO_DATA|"
-            mock_session_instance.get.return_value.content = HTML_WITH_OPPORTUNITIES.encode()
             
             result = monitor.check_for_changes()
             assert result == True
