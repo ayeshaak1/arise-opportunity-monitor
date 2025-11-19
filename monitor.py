@@ -313,7 +313,7 @@ def check_for_changes():
         notification_message = ""
         change_type = "opportunities_updated"  # default
 
-        if current_state_hash == previous_hash:
+        if current_state_hash != previous_hash:
             # State has changed
             if current_state == "OPPORTUNITIES_AVAILABLE" and previous_state_str == "NO_DATA":
                 # This is what we're looking for! No Data → Opportunities Available
