@@ -8,6 +8,8 @@ from email.mime.multipart import MIMEMultipart
 import logging
 import sys
 import requests.packages.urllib3
+import json
+import re
 
 requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for speed
 
@@ -21,12 +23,6 @@ logger = logging.getLogger(__name__)
 def send_email_notification(message, opportunity_details=None, change_type="new_opportunities"):
     """
     Sends an email notification using Gmail's SMTP server.
-    
-    Args:
-        message: The email body content
-        opportunity_details: List of opportunity details
-        change_type: Type of change detected - determines the subject line
-                   ("new_opportunities", "opportunities_removed", "opportunities_updated", "error")
     """
     sender_email = os.getenv('GMAIL_ADDRESS')
     sender_password = os.getenv('GMAIL_APP_PASSWORD')
@@ -85,48 +81,136 @@ def send_email_notification(message, opportunity_details=None, change_type="new_
         logger.error(f"❌ Failed to send email: {e}")
         return False
 
-def extract_opportunities(soup):
+def extract_opportunities_from_script_tags(soup):
     """
-    Extract opportunity details from the Program Announcement section.
-    Returns a list of opportunity strings and a boolean indicating if opportunities exist.
+    Extract opportunities from JavaScript data in script tags.
+    This handles the dynamic content loaded by Knockout.js
     """
     opportunities = []
     has_opportunities = False
     
-    # Look for the Program Announcement widget
+    # Look for script tags that might contain opportunity data
+    scripts = soup.find_all('script')
+    
+    for script in scripts:
+        if script.string:
+            script_content = script.string
+            
+            # Look for the portalSettings variable which contains initial data
+            if 'portalSettings' in script_content:
+                try:
+                    # Extract the JSON-like object from portalSettings
+                    match = re.search(r'var portalSettings\s*=\s*({.*?});', script_content, re.DOTALL)
+                    if match:
+                        portal_settings_str = match.group(1)
+                        # Clean up the string to make it valid JSON
+                        portal_settings_str = re.sub(r',\s*}', '}', portal_settings_str)  # Remove trailing commas
+                        portal_data = json.loads(portal_settings_str)
+                        
+                        # Check if there's opportunity data in the portal settings
+                        # This might be in siteMap or other nested structures
+                        logger.info(f"Found portal settings, checking for opportunity data...")
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"Could not parse portal settings: {e}")
+                    continue
+            
+            # Look for opportunity data in other script patterns
+            # The opportunities might be in data-bind attributes or other JavaScript objects
+            if 'opportunityAnnouncementData' in script_content:
+                logger.info("Found opportunityAnnouncementData in script")
+                # Try to extract the array data
+                match = re.search(r'opportunityAnnouncementData\s*:\s*(\[.*?\])', script_content, re.DOTALL)
+                if match:
+                    try:
+                        opportunity_data = json.loads(match.group(1))
+                        for opp in opportunity_data:
+                            if 'OpportunityName' in opp and 'FileName' in opp:
+                                opportunity_str = f"{opp['OpportunityName']} - {opp['FileName']}"
+                                opportunities.append(opportunity_str)
+                                has_opportunities = True
+                        logger.info(f"Extracted {len(opportunities)} opportunities from script data")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Could not parse opportunity data: {e}")
+    
+    return opportunities, has_opportunities
+
+def extract_opportunities_from_dynamic_content(soup):
+    """
+    Try to extract opportunities from dynamically loaded content in various ways
+    """
+    opportunities = []
+    has_opportunities = False
+    
+    # Method 1: Look for the opportunity announcement widget and check for "No Data"
     opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
     
     if opportunity_widget:
         # Check if the "No Data" message is present
-        no_data_message = opportunity_widget.find('h4', class_='alert alert-warning')
-        
-        if no_data_message and "No Data" in no_data_message.get_text():
+        no_data_elements = opportunity_widget.find_all(text=re.compile('No Data'))
+        if no_data_elements:
             logger.info("📭 No opportunities found - 'No Data' message present")
             return [], False
         
-        # Look for opportunity rows in the table
-        table = opportunity_widget.find('table')
-        if table:
-            # Look for table rows (skip header row)
-            rows = table.find_all('tr')[1:]  # Skip the first header row
+        # Look for any tables that might contain opportunity data
+        tables = opportunity_widget.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')[1:]  # Skip header rows
             
             for row in rows:
                 cells = row.find_all('td')
-                if len(cells) >= 3:  # Should have Opportunity, Download, File Name columns
-                    opportunity_name = cells[0].get_text(strip=True)
-                    file_name = cells[2].get_text(strip=True)
+                if len(cells) >= 2:  # At least Opportunity and File Name columns
+                    # Try different cell combinations
+                    opportunity_name = ""
+                    file_name = ""
                     
-                    if opportunity_name and opportunity_name != "No Data":
-                        opportunity_str = f"{opportunity_name} - {file_name}"
+                    if len(cells) >= 1:
+                        opportunity_name = cells[0].get_text(strip=True)
+                    if len(cells) >= 3:
+                        file_name = cells[2].get_text(strip=True)
+                    elif len(cells) >= 2:
+                        file_name = cells[1].get_text(strip=True)
+                    
+                    if opportunity_name and opportunity_name not in ["No Data", "Opportunity"]:
+                        if file_name:
+                            opportunity_str = f"{opportunity_name} - {file_name}"
+                        else:
+                            opportunity_str = opportunity_name
                         opportunities.append(opportunity_str)
                         has_opportunities = True
-            
-            if opportunities:
-                logger.info(f"🎯 Found {len(opportunities)} opportunities")
-            else:
-                logger.info("📭 No opportunity rows found in table")
+    
+    # Method 2: If no opportunities found in tables, try script tag extraction
+    if not has_opportunities:
+        script_opportunities, script_has_opportunities = extract_opportunities_from_script_tags(soup)
+        if script_has_opportunities:
+            opportunities.extend(script_opportunities)
+            has_opportunities = True
+    
+    # Method 3: Look for any text that might indicate opportunities
+    if not has_opportunities:
+        # Check if there are any download links or opportunity-related text
+        download_links = soup.find_all('a', text=re.compile(r'download|Download', re.IGNORECASE))
+        opportunity_text = soup.find_all(text=re.compile(r'opportunity|Opportunity', re.IGNORECASE))
+        
+        if download_links or opportunity_text:
+            logger.info("Found opportunity-related elements but couldn't parse structured data")
+            # If we find opportunity-related content but no structured data, 
+            # assume there might be opportunities but we can't extract details
+            has_opportunities = True
+            opportunities = ["Opportunities available (details in portal)"]
+    
+    if opportunities:
+        logger.info(f"🎯 Found {len(opportunities)} opportunities")
+    elif not has_opportunities:
+        logger.info("📭 No opportunities found")
     
     return opportunities, has_opportunities
+
+def extract_opportunities(soup):
+    """
+    Main function to extract opportunities - tries multiple methods
+    """
+    return extract_opportunities_from_dynamic_content(soup)
 
 def check_for_changes():
     """
@@ -167,13 +251,22 @@ def check_for_changes():
         
         for attempt in login_attempts:
             try:
-                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=False)
-                if response.status_code in [200, 302]:  # Success or redirect
-                    # Check if we got a session cookie or redirect to dashboard
-                    if 'set-cookie' in response.headers or response.status_code == 302:
+                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=True, timeout=REQUEST_TIMEOUT)
+                # Check for successful login by looking for dashboard elements or absence of login form
+                if response.status_code == 200:
+                    # Check if we're still on a login page or successfully logged in
+                    if 'login' not in response.url.lower() and 'signin' not in response.url.lower():
                         login_successful = True
                         logger.info("✅ Login successful!")
                         break
+                    else:
+                        # Parse response to check if login form is still present
+                        soup = BeautifulSoup(response.content, 'html.parser')
+                        login_forms = soup.find_all('form', {'action': re.compile(r'login|signin', re.IGNORECASE)})
+                        if not login_forms:
+                            login_successful = True
+                            logger.info("✅ Login successful!")
+                            break
             except Exception as e:
                 logger.warning(f"Login attempt failed: {e}")
                 continue
@@ -213,7 +306,7 @@ def check_for_changes():
         # Use a simple string that represents the opportunity state
         if has_opportunities_now:
             current_state = "OPPORTUNITIES_AVAILABLE"
-            state_details = ",".join(current_opportunities)  # Store opportunity names for comparison
+            state_details = ",".join(current_opportunities) if current_opportunities else "opportunities_available"
         else:
             current_state = "NO_DATA"
             state_details = ""
@@ -240,7 +333,7 @@ def check_for_changes():
         change_detected = False
         notification_message = ""
         change_type = "opportunities_updated"  # default
-        
+
         if current_state_hash != previous_hash:
             # State has changed
             if current_state == "OPPORTUNITIES_AVAILABLE" and previous_state_str == "NO_DATA":
@@ -263,22 +356,6 @@ def check_for_changes():
                 change_type = "opportunities_updated"
                 notification_message = "📊 Opportunities Updated\n\nThe available opportunities have changed."
                 logger.info("📊 Change detected: Opportunities updated")
-        
-        # STEP 8: Handle notifications and state saving
-        if change_detected:
-            logger.info("🎉 Change detected! Sending notification.")
-            
-            # Only include opportunity details if we have opportunities now
-            opportunity_details = current_opportunities if has_opportunities_now else None
-            
-            send_email_notification(notification_message, opportunity_details, change_type)
-            
-            # Save the new state
-            with open('previous_state.txt', 'w') as f:
-                f.write(f"{current_state_hash}|{current_state}|{state_details}")
-                
-            logger.info("💾 New state saved")
-            return True
 
         # STEP 8: Handle notifications and state saving
         if change_detected:
@@ -287,7 +364,7 @@ def check_for_changes():
             # Only include opportunity details if we have opportunities now
             opportunity_details = current_opportunities if has_opportunities_now else None
             
-            send_email_notification(notification_message, opportunity_details)
+            send_email_notification(notification_message, opportunity_details, change_type)
             
             # Save the new state
             with open('previous_state.txt', 'w') as f:
