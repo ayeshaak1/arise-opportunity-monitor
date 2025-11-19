@@ -7,6 +7,7 @@ class MockResponse:
     def __init__(self, text, status_code=200, headers=None, url=None):
         self.status_code = status_code
         self.content = text.encode('utf-8')
+        self.text = text  # Add text attribute for the new debug code
         self.headers = headers or {}
         self.url = url or "https://link.arise.com/dashboard"
 
@@ -20,6 +21,7 @@ class MockSession:
         self.timeout = None
 
     def post(self, url, data=None, allow_redirects=False, timeout=None):
+        # Return a response that indicates successful login
         return MockResponse("", status_code=200, url="https://link.arise.com/dashboard")
 
     def get(self, url, timeout=None):
@@ -32,6 +34,8 @@ def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
     # Provide dummy credentials
     monkeypatch.setenv("ARISE_USERNAME", "dummy")
     monkeypatch.setenv("ARISE_PASSWORD", "dummy")
+    monkeypatch.setenv("GMAIL_ADDRESS", "test@example.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "testpass")
 
     # Replace requests.Session with our mock
     monkeypatch.setattr(requests, "Session", lambda: MockSession())
