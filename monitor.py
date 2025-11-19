@@ -8,8 +8,6 @@ from email.mime.multipart import MIMEMultipart
 import logging
 import sys
 import requests.packages.urllib3
-import json
-import re
 
 requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for speed
 
@@ -81,120 +79,30 @@ def send_email_notification(message, opportunity_details=None, change_type="new_
         logger.error(f"❌ Failed to send email: {e}")
         return False
 
-def has_no_data_message(soup):
+def extract_opportunities(soup):
     """
-    SIMPLE CHECK: Look for "No Data" message in the opportunity announcement widget.
-    Returns True if "No Data" is found (no opportunities), False otherwise.
+    SUPER SIMPLE CHECK: Look for "No Data" message in the entire page.
+    If "No Data" is found in the opportunity widget → no opportunities
+    If "No Data" is NOT found → opportunities exist
     """
+    # Look for the opportunity announcement widget
     opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
     
     if not opportunity_widget:
         logger.info("📭 Opportunity widget not found")
-        return True  # If widget doesn't exist, treat as no opportunities
-    
-    # Look for "No Data" text in the widget
-    no_data_text = opportunity_widget.find(string=re.compile(r'No Data', re.IGNORECASE))
-    
-    if no_data_text:
-        logger.info("📭 'No Data' message found - no opportunities available")
-        return True
-    else:
-        logger.info("🎯 No 'No Data' message found - opportunities might be available")
-        return False
-
-def extract_opportunities_simple(soup):
-    """
-    Simple opportunity extraction - primarily uses the presence/absence of "No Data"
-    """
-    # First and simplest check: if "No Data" message exists, no opportunities
-    if has_no_data_message(soup):
         return [], False
     
-    # If we get here, "No Data" is NOT present, so opportunities should be available
-    # Try to extract opportunity details, but this is secondary
-    opportunities = []
+    # Get ALL text from the widget (simple approach)
+    widget_text = opportunity_widget.get_text()
     
-    opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
-    if opportunity_widget:
-        # Look for tables with opportunity data
-        tables = opportunity_widget.find_all('table')
-        for table in tables:
-            rows = table.find_all('tr')[1:]  # Skip header rows
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) >= 2:
-                    opportunity_name = cells[0].get_text(strip=True) if len(cells) >= 1 else ""
-                    file_name = cells[2].get_text(strip=True) if len(cells) >= 3 else cells[1].get_text(strip=True) if len(cells) >= 2 else ""
-                    
-                    if opportunity_name and opportunity_name not in ["No Data", "Opportunity"]:
-                        if file_name:
-                            opportunity_str = f"{opportunity_name} - {file_name}"
-                        else:
-                            opportunity_str = opportunity_name
-                        opportunities.append(opportunity_str)
-    
-    # If we couldn't extract specific opportunities but "No Data" is not present,
-    # we still know opportunities exist
-    has_opportunities = True
-    
-    if opportunities:
-        logger.info(f"🎯 Extracted {len(opportunities)} specific opportunities")
+    # Simple check: if "No Data" appears anywhere in the widget text
+    if 'No Data' in widget_text:
+        logger.info("📭 'No Data' message found - NO opportunities available")
+        return [], False
     else:
-        logger.info("🎯 Opportunities available (but couldn't extract details)")
-        opportunities = ["Opportunities available (check portal for details)"]
-    
-    return opportunities, has_opportunities
-
-def extract_opportunities_from_script_tags(soup):
-    """
-    Backup method: Extract opportunities from JavaScript data in script tags.
-    This is less reliable but can be used as a fallback.
-    """
-    opportunities = []
-    has_opportunities = False
-    
-    scripts = soup.find_all('script')
-    
-    for script in scripts:
-        if script.string and 'opportunityAnnouncementData' in script.string:
-            script_content = script.string
-            logger.info("🔍 Found opportunityAnnouncementData in script")
-            
-            # Try multiple patterns
-            patterns = [
-                r'opportunityAnnouncementData\s*:\s*(\[.*?\]),',
-                r'opportunityAnnouncementData\s*=\s*(\[.*?\]);',
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, script_content, re.DOTALL)
-                if match:
-                    try:
-                        data_str = match.group(1)
-                        # Clean up JSON string
-                        data_str = re.sub(r',\s*\]', ']', data_str)
-                        opportunity_data = json.loads(data_str)
-                        
-                        for opp in opportunity_data:
-                            if isinstance(opp, dict) and 'OpportunityName' in opp and 'FileName' in opp:
-                                opportunity_str = f"{opp['OpportunityName']} - {opp['FileName']}"
-                                opportunities.append(opportunity_str)
-                                has_opportunities = True
-                        
-                        if has_opportunities:
-                            logger.info(f"📊 Extracted {len(opportunities)} opportunities from script")
-                            break
-                    except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Could not parse script data: {e}")
-                        continue
-    
-    return opportunities, has_opportunities
-
-def extract_opportunities(soup):
-    """
-    Main function to extract opportunities - uses simple "No Data" check as primary method
-    """
-    return extract_opportunities_simple(soup)
+        logger.info("🎯 No 'No Data' message found - OPPORTUNITIES AVAILABLE!")
+        # Return a generic message since we know opportunities exist but don't have details
+        return ["New opportunities available - check Arise portal for details"], True
 
 def check_for_changes():
     """
@@ -246,7 +154,7 @@ def check_for_changes():
                     else:
                         # Parse response to check if login form is still present
                         soup = BeautifulSoup(response.content, 'html.parser')
-                        login_forms = soup.find_all('form', {'action': re.compile(r'login|signin', re.IGNORECASE)})
+                        login_forms = soup.find_all('form', {'action': lambda x: x and ('login' in x.lower() or 'signin' in x.lower())})
                         if not login_forms:
                             login_successful = True
                             logger.info("✅ Login successful!")
