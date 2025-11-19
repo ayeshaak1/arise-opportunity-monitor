@@ -81,108 +81,50 @@ def send_email_notification(message, opportunity_details=None, change_type="new_
         logger.error(f"❌ Failed to send email: {e}")
         return False
 
-def extract_opportunities_from_script_tags(soup):
+def has_no_data_message(soup):
     """
-    Extract opportunities from JavaScript data in script tags.
-    This handles the dynamic content loaded by Knockout.js
+    SIMPLE CHECK: Look for "No Data" message in the opportunity announcement widget.
+    Returns True if "No Data" is found (no opportunities), False otherwise.
     """
-    opportunities = []
-    has_opportunities = False
-    
-    # Look for script tags that might contain opportunity data
-    scripts = soup.find_all('script')
-    
-    for script in scripts:
-        if script.string:
-            script_content = script.string
-            
-            # Look for the portalSettings variable which contains initial data
-            if 'portalSettings' in script_content:
-                try:
-                    # Extract the JSON-like object from portalSettings
-                    match = re.search(r'var portalSettings\s*=\s*({.*?});', script_content, re.DOTALL)
-                    if match:
-                        portal_settings_str = match.group(1)
-                        # Clean up the string to make it valid JSON
-                        portal_settings_str = re.sub(r',\s*}', '}', portal_settings_str)  # Remove trailing commas
-                        portal_data = json.loads(portal_settings_str)
-                        
-                        # Check if there's opportunity data in the portal settings
-                        # This might be in siteMap or other nested structures
-                        logger.info(f"Found portal settings, checking for opportunity data...")
-                        
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Could not parse portal settings: {e}")
-                    continue
-            
-            # Look for opportunity data in other script patterns
-            # The opportunities might be in data-bind attributes or other JavaScript objects
-            if 'opportunityAnnouncementData' in script_content:
-                logger.info("Found opportunityAnnouncementData in script")
-                # Try to extract the array data - match both assignment patterns
-                patterns = [
-                    r'opportunityAnnouncementData\s*:\s*(\[.*?\])\s*,',  # Object property
-                    r'opportunityAnnouncementData\s*=\s*(\[.*?\])\s*;',  # Variable assignment
-                    r'"opportunityAnnouncementData"\s*:\s*(\[.*?\])\s*,',  # Quoted property
-                ]
-                
-                for pattern in patterns:
-                    match = re.search(pattern, script_content, re.DOTALL)
-                    if match:
-                        try:
-                            opportunity_data_str = match.group(1)
-                            # Clean up the string
-                            opportunity_data_str = re.sub(r',\s*\]', ']', opportunity_data_str)  # Remove trailing commas
-                            opportunity_data = json.loads(opportunity_data_str)
-                            
-                            for opp in opportunity_data:
-                                if 'OpportunityName' in opp and 'FileName' in opp:
-                                    opportunity_str = f"{opp['OpportunityName']} - {opp['FileName']}"
-                                    opportunities.append(opportunity_str)
-                                    has_opportunities = True
-                            logger.info(f"Extracted {len(opportunities)} opportunities from script data")
-                            break  # Stop after first successful pattern
-                        except (json.JSONDecodeError, KeyError, IndexError) as e:
-                            logger.warning(f"Could not parse opportunity data with pattern {pattern}: {e}")
-                            continue
-    
-    return opportunities, has_opportunities
-
-def extract_opportunities_from_dynamic_content(soup):
-    """
-    Try to extract opportunities from dynamically loaded content in various ways
-    """
-    opportunities = []
-    has_opportunities = False
-    
-    # Method 1: Look for the opportunity announcement widget and check for "No Data"
     opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
     
+    if not opportunity_widget:
+        logger.info("📭 Opportunity widget not found")
+        return True  # If widget doesn't exist, treat as no opportunities
+    
+    # Look for "No Data" text in the widget
+    no_data_text = opportunity_widget.find(string=re.compile(r'No Data', re.IGNORECASE))
+    
+    if no_data_text:
+        logger.info("📭 'No Data' message found - no opportunities available")
+        return True
+    else:
+        logger.info("🎯 No 'No Data' message found - opportunities might be available")
+        return False
+
+def extract_opportunities_simple(soup):
+    """
+    Simple opportunity extraction - primarily uses the presence/absence of "No Data"
+    """
+    # First and simplest check: if "No Data" message exists, no opportunities
+    if has_no_data_message(soup):
+        return [], False
+    
+    # If we get here, "No Data" is NOT present, so opportunities should be available
+    # Try to extract opportunity details, but this is secondary
+    opportunities = []
+    
+    opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
     if opportunity_widget:
-        # Check if the "No Data" message is present
-        no_data_elements = opportunity_widget.find_all(string=re.compile('No Data'))  # FIXED: text -> string
-        if no_data_elements:
-            logger.info("📭 No opportunities found - 'No Data' message present")
-            return [], False
-        
-        # Look for any tables that might contain opportunity data
+        # Look for tables with opportunity data
         tables = opportunity_widget.find_all('table')
         for table in tables:
             rows = table.find_all('tr')[1:]  # Skip header rows
-            
             for row in rows:
                 cells = row.find_all('td')
-                if len(cells) >= 2:  # At least Opportunity and File Name columns
-                    # Try different cell combinations
-                    opportunity_name = ""
-                    file_name = ""
-                    
-                    if len(cells) >= 1:
-                        opportunity_name = cells[0].get_text(strip=True)
-                    if len(cells) >= 3:
-                        file_name = cells[2].get_text(strip=True)
-                    elif len(cells) >= 2:
-                        file_name = cells[1].get_text(strip=True)
+                if len(cells) >= 2:
+                    opportunity_name = cells[0].get_text(strip=True) if len(cells) >= 1 else ""
+                    file_name = cells[2].get_text(strip=True) if len(cells) >= 3 else cells[1].get_text(strip=True) if len(cells) >= 2 else ""
                     
                     if opportunity_name and opportunity_name not in ["No Data", "Opportunity"]:
                         if file_name:
@@ -190,40 +132,69 @@ def extract_opportunities_from_dynamic_content(soup):
                         else:
                             opportunity_str = opportunity_name
                         opportunities.append(opportunity_str)
-                        has_opportunities = True
     
-    # Method 2: If no opportunities found in tables, try script tag extraction
-    if not has_opportunities:
-        script_opportunities, script_has_opportunities = extract_opportunities_from_script_tags(soup)
-        if script_has_opportunities:
-            opportunities.extend(script_opportunities)
-            has_opportunities = True
-    
-    # Method 3: Look for any text that might indicate opportunities
-    if not has_opportunities:
-        # Check if there are any download links or opportunity-related text
-        download_links = soup.find_all('a', string=re.compile(r'download|Download', re.IGNORECASE))  # FIXED: text -> string
-        opportunity_text = soup.find_all(string=re.compile(r'opportunity|Opportunity', re.IGNORECASE))  # FIXED: text -> string
-        
-        if download_links or opportunity_text:
-            logger.info("Found opportunity-related elements but couldn't parse structured data")
-            # If we find opportunity-related content but no structured data, 
-            # assume there might be opportunities but we can't extract details
-            has_opportunities = True
-            opportunities = ["Opportunities available (details in portal)"]
+    # If we couldn't extract specific opportunities but "No Data" is not present,
+    # we still know opportunities exist
+    has_opportunities = True
     
     if opportunities:
-        logger.info(f"🎯 Found {len(opportunities)} opportunities")
-    elif not has_opportunities:
-        logger.info("📭 No opportunities found")
+        logger.info(f"🎯 Extracted {len(opportunities)} specific opportunities")
+    else:
+        logger.info("🎯 Opportunities available (but couldn't extract details)")
+        opportunities = ["Opportunities available (check portal for details)"]
+    
+    return opportunities, has_opportunities
+
+def extract_opportunities_from_script_tags(soup):
+    """
+    Backup method: Extract opportunities from JavaScript data in script tags.
+    This is less reliable but can be used as a fallback.
+    """
+    opportunities = []
+    has_opportunities = False
+    
+    scripts = soup.find_all('script')
+    
+    for script in scripts:
+        if script.string and 'opportunityAnnouncementData' in script.string:
+            script_content = script.string
+            logger.info("🔍 Found opportunityAnnouncementData in script")
+            
+            # Try multiple patterns
+            patterns = [
+                r'opportunityAnnouncementData\s*:\s*(\[.*?\]),',
+                r'opportunityAnnouncementData\s*=\s*(\[.*?\]);',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, script_content, re.DOTALL)
+                if match:
+                    try:
+                        data_str = match.group(1)
+                        # Clean up JSON string
+                        data_str = re.sub(r',\s*\]', ']', data_str)
+                        opportunity_data = json.loads(data_str)
+                        
+                        for opp in opportunity_data:
+                            if isinstance(opp, dict) and 'OpportunityName' in opp and 'FileName' in opp:
+                                opportunity_str = f"{opp['OpportunityName']} - {opp['FileName']}"
+                                opportunities.append(opportunity_str)
+                                has_opportunities = True
+                        
+                        if has_opportunities:
+                            logger.info(f"📊 Extracted {len(opportunities)} opportunities from script")
+                            break
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Could not parse script data: {e}")
+                        continue
     
     return opportunities, has_opportunities
 
 def extract_opportunities(soup):
     """
-    Main function to extract opportunities - tries multiple methods
+    Main function to extract opportunities - uses simple "No Data" check as primary method
     """
-    return extract_opportunities_from_dynamic_content(soup)
+    return extract_opportunities_simple(soup)
 
 def check_for_changes():
     """
@@ -304,7 +275,7 @@ def check_for_changes():
         # Parse the HTML
         soup = BeautifulSoup(page_response.content, 'html.parser')
 
-        # STEP 3: Extract opportunities from the Program Announcement section
+        # STEP 3: Extract opportunities using SIMPLE "No Data" check
         current_opportunities, has_opportunities_now = extract_opportunities(soup)
         
         # STEP 4: Read previous state
