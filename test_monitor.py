@@ -292,35 +292,40 @@ class TestEnvironmentVariables:
                 assert True  # Environment variables are missing as expected
 
 class TestScriptExtraction:
-    def test_extract_from_portal_settings(self):
-        """Test extraction from portalSettings JavaScript variable"""
-        html_with_portal_settings = """
+    def test_extract_from_opportunity_data_object_property(self):
+        """Test extraction from opportunityAnnouncementData as object property"""
+        html_with_opportunity_data = """
         <html>
             <script>
-                var portalSettings = {
-                    "user": "test",
-                    "data": "value"
+                var someSettings = {
+                    opportunityAnnouncementData: [
+                        {
+                            "OpportunityName": "Test Opportunity",
+                            "FileName": "test.pdf",
+                            "Download": "/download/test"
+                        }
+                    ]
                 };
             </script>
         </html>
         """
-        soup = BeautifulSoup(html_with_portal_settings, 'html.parser')
+        soup = BeautifulSoup(html_with_opportunity_data, 'html.parser')
         opportunities, has_opportunities = monitor.extract_opportunities_from_script_tags(soup)
         
-        # Should find portalSettings but no opportunity data in it
-        assert opportunities == []
-        assert has_opportunities == False
+        expected_opportunities = ["Test Opportunity - test.pdf"]
+        assert opportunities == expected_opportunities
+        assert has_opportunities == True
 
-    def test_extract_from_opportunity_data(self):
-        """Test extraction from opportunityAnnouncementData JavaScript variable"""
+    def test_extract_from_opportunity_data_variable(self):
+        """Test extraction from opportunityAnnouncementData as variable"""
         html_with_opportunity_data = """
         <html>
             <script>
                 var opportunityAnnouncementData = [
                     {
-                        "OpportunityName": "Test Opportunity",
-                        "FileName": "test.pdf",
-                        "Download": "/download/test"
+                        "OpportunityName": "Variable Opp",
+                        "FileName": "var.pdf",
+                        "Download": "/download/var"
                     }
                 ];
             </script>
@@ -329,7 +334,7 @@ class TestScriptExtraction:
         soup = BeautifulSoup(html_with_opportunity_data, 'html.parser')
         opportunities, has_opportunities = monitor.extract_opportunities_from_script_tags(soup)
         
-        expected_opportunities = ["Test Opportunity - test.pdf"]
+        expected_opportunities = ["Variable Opp - var.pdf"]
         assert opportunities == expected_opportunities
         assert has_opportunities == True
 
