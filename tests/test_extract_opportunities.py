@@ -36,18 +36,20 @@ def test_extract_script_opportunities():
     html = """
     <html>
         <script>
-            var opportunityAnnouncementData = [
-                {
-                    "OpportunityName": "Script Opp 1",
-                    "FileName": "script1.pdf",
-                    "Download": "/download/1"
-                },
-                {
-                    "OpportunityName": "Script Opp 2",
-                    "FileName": "script2.pdf", 
-                    "Download": "/download/2"
-                }
-            ];
+            var someSettings = {
+                opportunityAnnouncementData: [
+                    {
+                        "OpportunityName": "Script Opp 1",
+                        "FileName": "script1.pdf",
+                        "Download": "/download/1"
+                    },
+                    {
+                        "OpportunityName": "Script Opp 2",
+                        "FileName": "script2.pdf", 
+                        "Download": "/download/2"
+                    }
+                ]
+            };
         </script>
     </html>
     """
@@ -57,6 +59,26 @@ def test_extract_script_opportunities():
     assert len(opportunities) == 2
     assert "Script Opp 1 - script1.pdf" in opportunities
     assert "Script Opp 2 - script2.pdf" in opportunities
+
+def test_extract_script_opportunities_variable_assignment():
+    html = """
+    <html>
+        <script>
+            var opportunityAnnouncementData = [
+                {
+                    "OpportunityName": "Direct Assignment Opp",
+                    "FileName": "direct.pdf",
+                    "Download": "/download/direct"
+                }
+            ];
+        </script>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    opportunities, has = monitor.extract_opportunities_from_script_tags(soup)
+    assert has is True
+    assert len(opportunities) == 1
+    assert "Direct Assignment Opp - direct.pdf" in opportunities
 
 def test_extract_dynamic_content():
     html = """
