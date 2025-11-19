@@ -146,13 +146,13 @@ def check_for_changes():
     arise_username = os.getenv('ARISE_USERNAME')
     arise_password = os.getenv('ARISE_PASSWORD')
 
-    # STEP 1: Simple login approach (old working logic)
+    # STEP 1: Try multiple login approaches (OLD WORKING LOGIC)
     login_successful = False
     
     if arise_username and arise_password:
         logger.info("Attempting to log in...")
         
-        # Try different login endpoints and form fields (old working approach)
+        # Try different login endpoints and form fields
         login_attempts = [
             {
                 'url': 'https://link.arise.com/Account/Login',
