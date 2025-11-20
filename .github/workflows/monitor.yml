@@ -2,8 +2,10 @@ name: Arise Opportunity Monitor
 
 on:
   schedule:
-    # Runs every 10 minutes
-    - cron: '*/10 * * * *'
+    # Runs every hour
+    # At 3 min/run: 24 runs/day * 30 days * 3 min = 2,160 min/month
+    # Note: Slightly over free tier (2000 min), but close enough
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
