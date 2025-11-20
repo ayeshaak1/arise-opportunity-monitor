@@ -85,12 +85,19 @@ def extract_opportunities(soup):
     If "No Data" is found in the opportunity widget → no opportunities
     If "No Data" is NOT found → opportunities exist
     """
-    # Look for the opportunity announcement widget
-    opportunity_widget = soup.find('div', id='opportunityannouncementwidget')
+    # Look for the opportunity announcement widget - use case-insensitive search
+    opportunity_widget = soup.find('div', id=lambda x: x and 'opportunityannouncementwidget' in x.lower())
     
     if not opportunity_widget:
         logger.info("📭 Opportunity widget not found")
+        # Debug: let's see what divs we CAN find
+        all_divs = soup.find_all('div', id=True)
+        logger.info(f"🔍 Found {len(all_divs)} divs with IDs")
+        for div in all_divs[:5]:  # Show first 5
+            logger.info(f"🔍 Div ID: {div.get('id')}")
         return [], False
+    
+    logger.info(f"✅ Found opportunity widget with ID: {opportunity_widget.get('id')}")
     
     # Get ALL text from the widget (simple approach)
     widget_text = opportunity_widget.get_text()
@@ -105,6 +112,7 @@ def extract_opportunities(soup):
         opportunities = extract_opportunity_details(opportunity_widget)
         if not opportunities:
             opportunities = ["New opportunities available - check Arise portal for details"]
+        logger.info(f"📋 Extracted opportunities: {opportunities}")
         return opportunities, True
 
 def extract_opportunity_details(widget):
