@@ -15,7 +15,12 @@ ENV/
 
 # Monitor output files
 debug_page.html
+debug_selenium_page.html
+debug_oauth_response.html
+debug_widget.html
+debug_login_redirect.html
 previous_state.txt
+artifacts/
 
 # IDE
 .vscode/
