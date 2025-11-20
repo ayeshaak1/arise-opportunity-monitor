@@ -44,7 +44,11 @@ def handle_oauth_login_selenium(username, password, headless=True):
     driver = None
     try:
         # Initialize Chrome driver
-        service = Service(ChromeDriverManager().install())
+        # On GitHub Actions, use system chromedriver if available
+        if os.getenv('GITHUB_ACTIONS') and os.path.exists('/usr/bin/chromedriver'):
+            service = Service('/usr/bin/chromedriver')
+        else:
+            service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.implicitly_wait(10)
         
@@ -147,7 +151,11 @@ def get_reference_page_with_selenium(session, headless=True):
     
     driver = None
     try:
-        service = Service(ChromeDriverManager().install())
+        # On GitHub Actions, use system chromedriver if available
+        if os.getenv('GITHUB_ACTIONS') and os.path.exists('/usr/bin/chromedriver'):
+            service = Service('/usr/bin/chromedriver')
+        else:
+            service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.implicitly_wait(5)  # Reduced from 10
         
