@@ -28,6 +28,8 @@ jobs:
         pip install -r requirements-dev.txt
     
     - name: Run tests
+      env:
+        PYTHONPATH: ${{ github.workspace }}
       run: |
         mkdir -p artifacts
         pytest tests/ test_monitor.py -v --junitxml=artifacts/junit.xml
