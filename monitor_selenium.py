@@ -138,6 +138,12 @@ def get_reference_page_with_selenium(session, headless=True):
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--window-size=1920,1080')
+    # For GitHub Actions/Linux environments
+    if os.getenv('GITHUB_ACTIONS') or os.path.exists('/usr/bin/chromium-browser'):
+        chrome_options.add_argument('--remote-debugging-port=9222')
+        # Use system chromium if available
+        if os.path.exists('/usr/bin/chromium-browser'):
+            chrome_options.binary_location = '/usr/bin/chromium-browser'
     
     driver = None
     try:
