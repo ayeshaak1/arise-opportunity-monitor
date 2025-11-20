@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 import logging
 import sys
 import requests.packages.urllib3
+import re
 
 requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for speed
 
@@ -90,22 +91,7 @@ def extract_opportunities(soup):
     
     if not opportunity_widget:
         logger.info("📭 Opportunity widget not found")
-        # Debug: let's see what the page actually contains
-        page_title = soup.find('title')
-        if page_title:
-            logger.info(f"🔍 Page title: {page_title.get_text()}")
-        
-        # Check if we're on a login page
-        login_forms = soup.find_all('form', {'action': lambda x: x and 'login' in x.lower() if x else False})
-        if login_forms:
-            logger.info("🔍 Found login forms - likely not logged in")
-        
-        # Check for any text that might indicate the page content
-        body_text = soup.get_text()[:500]  # First 500 chars
-        logger.info(f"🔍 Page content sample: {body_text}")
         return [], False
-    
-    logger.info(f"✅ Found opportunity widget with ID: {opportunity_widget.get('id')}")
     
     # Get ALL text from the widget (simple approach)
     widget_text = opportunity_widget.get_text()
@@ -147,6 +133,63 @@ def extract_opportunity_details(widget):
     
     return opportunities
 
+def handle_oauth_login(session, username, password):
+    """
+    Handle the OAuth login flow for Arise portal
+    """
+    # Step 1: Start at the main portal page to get redirected to OAuth
+    logger.info("🔄 Starting OAuth login flow...")
+    initial_response = session.get('https://link.arise.com/', allow_redirects=True, timeout=REQUEST_TIMEOUT)
+    
+    # Step 2: We should be redirected to the OAuth login page
+    if 'oauth.arise.com' in initial_response.url:
+        logger.info(f"🔐 Redirected to OAuth login: {initial_response.url}")
+        soup = BeautifulSoup(initial_response.content, 'html.parser')
+        
+        # Look for the login form on the OAuth page
+        login_form = soup.find('form')
+        if login_form:
+            form_action = login_form.get('action', '')
+            logger.info(f"🔐 Found login form with action: {form_action}")
+            
+            # Submit login credentials to the OAuth endpoint
+            login_data = {
+                'Username': username,
+                'Password': password,
+                'button': 'login'
+            }
+            
+            # If there are any hidden fields, include them
+            hidden_fields = login_form.find_all('input', {'type': 'hidden'})
+            for field in hidden_fields:
+                name = field.get('name')
+                value = field.get('value', '')
+                if name:
+                    login_data[name] = value
+            
+            # Post to the OAuth login endpoint
+            oauth_login_url = form_action
+            if not oauth_login_url.startswith('http'):
+                oauth_login_url = 'https://oauth.arise.com' + oauth_login_url
+                
+            logger.info(f"🔐 Posting login to OAuth endpoint: {oauth_login_url}")
+            login_response = session.post(oauth_login_url, data=login_data, allow_redirects=False, timeout=REQUEST_TIMEOUT)
+            
+            if login_response.status_code in [302, 303]:
+                logger.info("✅ OAuth login successful, following redirects...")
+                # Follow all redirects to get to the final page
+                final_response = session.get(login_response.headers['Location'], allow_redirects=True, timeout=REQUEST_TIMEOUT)
+                return final_response
+            else:
+                logger.error(f"❌ OAuth login failed with status: {login_response.status_code}")
+                return None
+        else:
+            logger.error("❌ Could not find login form on OAuth page")
+            return None
+    else:
+        logger.info("ℹ️  Not redirected to OAuth, using direct login")
+        return None
+
 def check_for_changes():
     """
     Main function to check for opportunity changes on the Arise portal.
@@ -164,57 +207,56 @@ def check_for_changes():
     arise_username = os.getenv('ARISE_USERNAME')
     arise_password = os.getenv('ARISE_PASSWORD')
 
-    # STEP 1: Try multiple login approaches (OLD WORKING LOGIC)
-    login_successful = False
+    if not arise_username or not arise_password:
+        logger.error("❌ Missing ARISE_USERNAME or ARISE_PASSWORD environment variables")
+        return False
+
+    # STEP 1: Handle OAuth login
+    logger.info("Attempting to log in...")
+    oauth_result = handle_oauth_login(session, arise_username, arise_password)
     
-    if arise_username and arise_password:
-        logger.info("Attempting to log in...")
+    if oauth_result and oauth_result.status_code == 200:
+        logger.info("✅ OAuth login successful!")
+        # Check if we're actually logged in by trying to access a protected page
+        test_response = session.get('https://link.arise.com/home', timeout=REQUEST_TIMEOUT)
+        if test_response.status_code == 200 and 'login' not in test_response.url.lower():
+            logger.info("✅ Confirmed logged in to portal")
+        else:
+            logger.warning("⚠️  May not be fully logged in, but will try reference page")
+    else:
+        logger.warning("⚠️  OAuth login failed, trying direct login methods...")
         
-        # Try different login endpoints and form fields
+        # Fallback to direct login methods
+        login_successful = False
         login_attempts = [
             {
                 'url': 'https://link.arise.com/Account/Login',
                 'data': {'username': arise_username, 'password': arise_password}
             },
             {
-                'url': 'https://link.arise.com/login', 
-                'data': {'email': arise_username, 'password': arise_password}
-            },
-            {
-                'url': 'https://link.arise.com/',
+                'url': 'https://oauth.arise.com/Account/Login', 
                 'data': {'Username': arise_username, 'Password': arise_password}
-            }
+            },
         ]
         
         for attempt in login_attempts:
             try:
-                logger.info(f"🔐 Trying login at {attempt['url']}")
-                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=False, timeout=REQUEST_TIMEOUT)
-                logger.info(f"🔐 Login response: {response.status_code}")
+                logger.info(f"🔐 Trying direct login at {attempt['url']}")
+                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=True, timeout=REQUEST_TIMEOUT)
                 
-                if response.status_code in [200, 302]:  # Success or redirect
-                    # Check if we got a session cookie or redirect to dashboard
-                    if 'set-cookie' in response.headers or response.status_code == 302:
-                        login_successful = True
-                        logger.info("✅ Login successful!")
-                        
-                        # If we got a redirect, follow it to get the actual page
-                        if response.status_code == 302 and 'Location' in response.headers:
-                            redirect_url = response.headers['Location']
-                            logger.info(f"🔄 Following redirect to: {redirect_url}")
-                            # Make sure it's an absolute URL
-                            if not redirect_url.startswith('http'):
-                                redirect_url = 'https://link.arise.com' + redirect_url
-                            session.get(redirect_url, timeout=REQUEST_TIMEOUT)
-                        break
+                # Check if we're on a logged-in page
+                if response.status_code == 200 and 'login' not in response.url.lower():
+                    login_successful = True
+                    logger.info("✅ Direct login successful!")
+                    break
             except Exception as e:
-                logger.warning(f"Login attempt failed: {e}")
+                logger.warning(f"Direct login attempt failed: {e}")
                 continue
                 
         if not login_successful:
-            logger.warning("⚠️  Login attempts failed, but will try to access page anyway")
-    else:
-        logger.warning("⚠️  No login credentials provided, accessing as guest")
+            logger.error("❌ All login attempts failed!")
+            send_email_notification("Arise monitor authentication failed - check your credentials", change_type="error")
+            return False
 
     # STEP 2: Access the references page
     target_url = "https://link.arise.com/reference"
@@ -225,6 +267,11 @@ def check_for_changes():
         logger.info(f"📄 Reference page status: {page_response.status_code}")
         logger.info(f"📄 Final URL: {page_response.url}")
         
+        # Save the page for debugging
+        with open('debug_page.html', 'w', encoding='utf-8') as f:
+            f.write(page_response.text)
+        logger.info("💾 Saved page content to debug_page.html for inspection")
+        
         page_response.raise_for_status()  # Raises an exception for bad status codes
         
         if page_response.status_code != 200:
@@ -234,10 +281,16 @@ def check_for_changes():
         # Parse the HTML
         soup = BeautifulSoup(page_response.content, 'html.parser')
 
-        # Save the page for debugging
-        with open('debug_page.html', 'w', encoding='utf-8') as f:
-            f.write(page_response.text)
-        logger.info("💾 Saved page content to debug_page.html for inspection")
+        # Check if we're actually on the reference page
+        page_title = soup.find('title')
+        if page_title:
+            logger.info(f"🔍 Page title: {page_title.get_text()}")
+        
+        # Check if we're being redirected to login
+        if 'login' in page_response.url.lower():
+            logger.error("❌ Redirected to login page - authentication failed")
+            send_email_notification("Arise monitor authentication failed - redirected to login", change_type="error")
+            return False
 
         # STEP 3: Extract opportunities using SIMPLE "No Data" check
         current_opportunities, has_opportunities_now = extract_opportunities(soup)
