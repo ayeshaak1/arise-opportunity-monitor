@@ -175,10 +175,20 @@ def handle_oauth_login(session, username, password):
             logger.info(f"🔐 Posting login to OAuth endpoint: {oauth_login_url}")
             login_response = session.post(oauth_login_url, data=login_data, allow_redirects=False, timeout=REQUEST_TIMEOUT)
             
-            if login_response.status_code in [302, 303]:
-                logger.info("✅ OAuth login successful, following redirects...")
+            if login_response.status_code in [302, 303] and 'Location' in login_response.headers:
+                redirect_url = login_response.headers['Location']
+                logger.info(f"✅ OAuth login successful, redirecting to: {redirect_url}")
+                
+                # Make the redirect URL absolute if it's relative
+                if redirect_url.startswith('/'):
+                    redirect_url = 'https://oauth.arise.com' + redirect_url
+                elif not redirect_url.startswith('http'):
+                    redirect_url = 'https://oauth.arise.com/' + redirect_url
+                
                 # Follow all redirects to get to the final page
-                final_response = session.get(login_response.headers['Location'], allow_redirects=True, timeout=REQUEST_TIMEOUT)
+                logger.info(f"🔄 Following redirect to: {redirect_url}")
+                final_response = session.get(redirect_url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
+                logger.info(f"🏁 Final URL after redirects: {final_response.url}")
                 return final_response
             else:
                 logger.error(f"❌ OAuth login failed with status: {login_response.status_code}")
@@ -215,48 +225,47 @@ def check_for_changes():
     logger.info("Attempting to log in...")
     oauth_result = handle_oauth_login(session, arise_username, arise_password)
     
+    login_successful = False
+    
     if oauth_result and oauth_result.status_code == 200:
-        logger.info("✅ OAuth login successful!")
-        # Check if we're actually logged in by trying to access a protected page
-        test_response = session.get('https://link.arise.com/home', timeout=REQUEST_TIMEOUT)
-        if test_response.status_code == 200 and 'login' not in test_response.url.lower():
-            logger.info("✅ Confirmed logged in to portal")
+        # Check if we're actually on a logged-in page (not a login page)
+        if 'login' not in oauth_result.url.lower() and 'account/login' not in oauth_result.url.lower():
+            logger.info("✅ OAuth login successful!")
+            login_successful = True
         else:
-            logger.warning("⚠️  May not be fully logged in, but will try reference page")
+            logger.warning("⚠️  OAuth login may have failed - still on login page")
     else:
-        logger.warning("⚠️  OAuth login failed, trying direct login methods...")
-        
-        # Fallback to direct login methods
-        login_successful = False
-        login_attempts = [
-            {
-                'url': 'https://link.arise.com/Account/Login',
-                'data': {'username': arise_username, 'password': arise_password}
-            },
-            {
-                'url': 'https://oauth.arise.com/Account/Login', 
-                'data': {'Username': arise_username, 'Password': arise_password}
-            },
-        ]
-        
-        for attempt in login_attempts:
-            try:
-                logger.info(f"🔐 Trying direct login at {attempt['url']}")
-                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=True, timeout=REQUEST_TIMEOUT)
-                
-                # Check if we're on a logged-in page
-                if response.status_code == 200 and 'login' not in response.url.lower():
-                    login_successful = True
-                    logger.info("✅ Direct login successful!")
-                    break
-            except Exception as e:
-                logger.warning(f"Direct login attempt failed: {e}")
-                continue
-                
-        if not login_successful:
-            logger.error("❌ All login attempts failed!")
-            send_email_notification("Arise monitor authentication failed - check your credentials", change_type="error")
-            return False
+        logger.warning("⚠️  OAuth login failed or returned unexpected response")
+    
+    # If OAuth failed, try direct login to OAuth endpoint
+    if not login_successful:
+        logger.info("🔄 Trying direct OAuth login...")
+        try:
+            # Try posting directly to the OAuth login endpoint
+            oauth_login_data = {
+                'Username': arise_username,
+                'Password': arise_password,
+                'button': 'login'
+            }
+            direct_response = session.post(
+                'https://oauth.arise.com/Account/Login', 
+                data=oauth_login_data, 
+                allow_redirects=True,
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if direct_response.status_code == 200 and 'login' not in direct_response.url.lower():
+                login_successful = True
+                logger.info("✅ Direct OAuth login successful!")
+            else:
+                logger.warning("❌ Direct OAuth login failed")
+        except Exception as e:
+            logger.warning(f"Direct OAuth login failed: {e}")
+    
+    if not login_successful:
+        logger.error("❌ All login attempts failed!")
+        send_email_notification("Arise monitor authentication failed - check your credentials", change_type="error")
+        return False
 
     # STEP 2: Access the references page
     target_url = "https://link.arise.com/reference"
