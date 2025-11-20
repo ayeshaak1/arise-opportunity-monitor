@@ -17,12 +17,16 @@ def test_extract_table_opportunity():
     html = """
     <div id="opportunityannouncementwidget">
       <table>
-        <tr><th>Opportunity</th><th>Download</th><th>File Name</th></tr>
-        <tr>
-          <td>Opportunity A</td>
-          <td><a href="/dl">Download</a></td>
-          <td>oppA.pdf</td>
-        </tr>
+        <thead>
+          <tr><th>Opportunity</th><th>Download</th><th>File Name</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Opportunity A</td>
+            <td><a href="/dl">Download</a></td>
+            <td>oppA.pdf</td>
+          </tr>
+        </tbody>
       </table>
     </div>
     """
@@ -30,8 +34,8 @@ def test_extract_table_opportunity():
     opportunities, has = monitor.extract_opportunities(soup)
     assert has is True
     assert len(opportunities) == 1
-    # Now we expect the actual opportunity details, not the generic message
-    assert opportunities[0] == "Opportunity A - oppA.pdf"
+    # Now we expect only the opportunity name, not the file name
+    assert opportunities[0] == "Opportunity A"
 
 def test_extract_generic_opportunities():
     """Test that ANY content without 'No Data' means opportunities exist"""
@@ -48,15 +52,16 @@ def test_extract_generic_opportunities():
     assert "New opportunities available" in opportunities[0]
 
 def test_extract_empty_widget():
-    """Test that an empty widget without 'No Data' still means opportunities exist"""
+    """Test that an empty widget is treated as NO_DATA (safety check)"""
     html = """
     <div id="opportunityannouncementwidget">
     </div>
     """
     soup = BeautifulSoup(html, "html.parser")
     opportunities, has = monitor.extract_opportunities(soup)
-    assert has is True
-    assert "New opportunities available" in opportunities[0]
+    # Empty widget is treated as NO_DATA for safety (JavaScript may need to load content)
+    assert has is False
+    assert opportunities == []
 
 def test_extract_no_widget():
     html = """

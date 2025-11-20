@@ -19,12 +19,22 @@ class MockSession:
     def __init__(self):
         self.headers = {}
         self.timeout = None
+        self.cookies = {}
 
     def post(self, url, data=None, allow_redirects=False, timeout=None):
         # Return a response that indicates successful login
         return MockResponse("", status_code=200, url="https://link.arise.com/dashboard")
 
-    def get(self, url, timeout=None):
+    def get(self, url, timeout=None, allow_redirects=True):
+        # Handle OAuth redirects
+        if 'oauth.arise.com' in url or '/connect/authorize' in url:
+            # Return OAuth authorization form
+            return MockResponse("""
+                <form action="https://link.arise.com/home" method="post">
+                    <input type="hidden" name="code" value="test_code">
+                    <input type="hidden" name="id_token" value="test_token">
+                </form>
+            """, status_code=200, url=url)
         return MockResponse(os.environ.get("CURRENT_HTML", ""), status_code=200)
 
 def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
@@ -46,6 +56,15 @@ def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
         return True
     monkeypatch.setattr(monitor, "send_email_notification", fake_send_email_notification)
 
+    # Mock Selenium to prevent it from running in tests
+    monkeypatch.setattr("monitor.SELENIUM_AVAILABLE", False)
+    
+    # Mock OAuth login to return success (returns a response object)
+    def mock_oauth_login(session, username, password):
+        mock_response = MockResponse("", status_code=200, url="https://link.arise.com/home")
+        return mock_response
+    monkeypatch.setattr(monitor, "handle_oauth_login", mock_oauth_login)
+    
     # 1) First run: page shows "No Data" -> should initialize previous_state.txt and not notify
     os.environ["CURRENT_HTML"] = """
     <div id="opportunityannouncementwidget">
@@ -64,12 +83,16 @@ def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
     os.environ["CURRENT_HTML"] = """
     <div id="opportunityannouncementwidget">
       <table>
-        <tr><th>Opportunity</th><th>Download</th><th>File Name</th></tr>
-        <tr>
-          <td>Opportunity B</td>
-          <td><a href="#">Download</a></td>
-          <td>oppB.pdf</td>
-        </tr>
+        <thead>
+          <tr><th>Opportunity</th><th>Download</th><th>File Name</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Opportunity B</td>
+            <td><a href="#">Download</a></td>
+            <td>oppB.pdf</td>
+          </tr>
+        </tbody>
       </table>
     </div>
     """
@@ -79,4 +102,25 @@ def test_flow_no_data_to_opportunities(tmp_path, monkeypatch):
     message, details, change_type = notifications[0]
     assert "NEW OPPORTUNITIES" in message
     assert details is not None
+    # Details should contain only the opportunity name, not the file name
+    assert len(details) == 1
+    assert details[0] == "Opportunity B"
+    assert change_type == "new_opportunities"
+    
+    # 3) Test first run with opportunities -> should send notification
+    # Clear previous state
+    p = tmp_path / "previous_state.txt"
+    if p.exists():
+        p.unlink()
+    
+    notifications.clear()
+    assert monitor.check_for_changes() is True
+    # Should have sent notification on first run with opportunities
+    assert len(notifications) == 1
+    message, details, change_type = notifications[0]
+    assert "OPPORTUNITIES AVAILABLE" in message
+    assert "first run" in message.lower()
+    assert details is not None
+    assert len(details) == 1
+    assert details[0] == "Opportunity B"
     assert change_type == "new_opportunities"
