@@ -90,11 +90,19 @@ def extract_opportunities(soup):
     
     if not opportunity_widget:
         logger.info("📭 Opportunity widget not found")
-        # Debug: let's see what divs we CAN find
-        all_divs = soup.find_all('div', id=True)
-        logger.info(f"🔍 Found {len(all_divs)} divs with IDs")
-        for div in all_divs[:5]:  # Show first 5
-            logger.info(f"🔍 Div ID: {div.get('id')}")
+        # Debug: let's see what the page actually contains
+        page_title = soup.find('title')
+        if page_title:
+            logger.info(f"🔍 Page title: {page_title.get_text()}")
+        
+        # Check if we're on a login page
+        login_forms = soup.find_all('form', {'action': lambda x: x and 'login' in x.lower() if x else False})
+        if login_forms:
+            logger.info("🔍 Found login forms - likely not logged in")
+        
+        # Check for any text that might indicate the page content
+        body_text = soup.get_text()[:500]  # First 500 chars
+        logger.info(f"🔍 Page content sample: {body_text}")
         return [], False
     
     logger.info(f"✅ Found opportunity widget with ID: {opportunity_widget.get('id')}")
@@ -147,7 +155,9 @@ def check_for_changes():
     session = requests.Session()
     session.timeout = REQUEST_TIMEOUT
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
     })
 
     # Get credentials from environment variables
@@ -178,12 +188,24 @@ def check_for_changes():
         
         for attempt in login_attempts:
             try:
-                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=False)
+                logger.info(f"🔐 Trying login at {attempt['url']}")
+                response = session.post(attempt['url'], data=attempt['data'], allow_redirects=False, timeout=REQUEST_TIMEOUT)
+                logger.info(f"🔐 Login response: {response.status_code}")
+                
                 if response.status_code in [200, 302]:  # Success or redirect
                     # Check if we got a session cookie or redirect to dashboard
                     if 'set-cookie' in response.headers or response.status_code == 302:
                         login_successful = True
                         logger.info("✅ Login successful!")
+                        
+                        # If we got a redirect, follow it to get the actual page
+                        if response.status_code == 302 and 'Location' in response.headers:
+                            redirect_url = response.headers['Location']
+                            logger.info(f"🔄 Following redirect to: {redirect_url}")
+                            # Make sure it's an absolute URL
+                            if not redirect_url.startswith('http'):
+                                redirect_url = 'https://link.arise.com' + redirect_url
+                            session.get(redirect_url, timeout=REQUEST_TIMEOUT)
                         break
             except Exception as e:
                 logger.warning(f"Login attempt failed: {e}")
@@ -200,6 +222,9 @@ def check_for_changes():
     
     try:
         page_response = session.get(target_url, timeout=REQUEST_TIMEOUT)
+        logger.info(f"📄 Reference page status: {page_response.status_code}")
+        logger.info(f"📄 Final URL: {page_response.url}")
+        
         page_response.raise_for_status()  # Raises an exception for bad status codes
         
         if page_response.status_code != 200:
@@ -208,6 +233,11 @@ def check_for_changes():
 
         # Parse the HTML
         soup = BeautifulSoup(page_response.content, 'html.parser')
+
+        # Save the page for debugging
+        with open('debug_page.html', 'w', encoding='utf-8') as f:
+            f.write(page_response.text)
+        logger.info("💾 Saved page content to debug_page.html for inspection")
 
         # STEP 3: Extract opportunities using SIMPLE "No Data" check
         current_opportunities, has_opportunities_now = extract_opportunities(soup)
