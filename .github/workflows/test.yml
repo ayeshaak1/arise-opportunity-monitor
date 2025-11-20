@@ -29,6 +29,7 @@ jobs:
     
     - name: Run tests
       run: |
+        mkdir -p artifacts
         pytest tests/ test_monitor.py -v --junitxml=artifacts/junit.xml
     
     - name: Upload test results
