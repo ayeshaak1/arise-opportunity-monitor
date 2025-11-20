@@ -189,7 +189,13 @@ def handle_oauth_login(session, username, password):
                 logger.info(f"🔄 Following redirect to: {redirect_url}")
                 final_response = session.get(redirect_url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
                 logger.info(f"🏁 Final URL after redirects: {final_response.url}")
-                return final_response
+                
+                # Check if we need to handle OAuth consent form
+                if 'connect/authorize' in final_response.url:
+                    logger.info("🔐 Handling OAuth authorization form...")
+                    return handle_oauth_authorization(session, final_response)
+                else:
+                    return final_response
             else:
                 logger.error(f"❌ OAuth login failed with status: {login_response.status_code}")
                 return None
@@ -198,6 +204,57 @@ def handle_oauth_login(session, username, password):
             return None
     else:
         logger.info("ℹ️  Not redirected to OAuth, using direct login")
+        return None
+
+def handle_oauth_authorization(session, auth_response):
+    """
+    Handle the OAuth authorization form submission
+    """
+    soup = BeautifulSoup(auth_response.content, 'html.parser')
+    
+    # Look for the authorization form
+    auth_form = soup.find('form')
+    if auth_form:
+        form_action = auth_form.get('action', '')
+        logger.info(f"🔐 Found OAuth authorization form with action: {form_action}")
+        
+        # Extract all form fields (hidden and visible)
+        form_data = {}
+        form_inputs = auth_form.find_all('input')
+        for input_field in form_inputs:
+            name = input_field.get('name')
+            value = input_field.get('value', '')
+            if name:
+                form_data[name] = value
+        
+        logger.info(f"🔐 Submitting OAuth authorization with {len(form_data)} fields")
+        
+        # Submit the authorization form
+        if not form_action.startswith('http'):
+            form_action = 'https://oauth.arise.com' + form_action
+            
+        auth_submit_response = session.post(form_action, data=form_data, allow_redirects=False, timeout=REQUEST_TIMEOUT)
+        
+        if auth_submit_response.status_code in [302, 303] and 'Location' in auth_submit_response.headers:
+            redirect_url = auth_submit_response.headers['Location']
+            logger.info(f"✅ OAuth authorization successful, redirecting to: {redirect_url}")
+            
+            # Make the redirect URL absolute if it's relative
+            if redirect_url.startswith('/'):
+                redirect_url = 'https://oauth.arise.com' + redirect_url
+            elif not redirect_url.startswith('http'):
+                redirect_url = 'https://oauth.arise.com/' + redirect_url
+            
+            # Follow the final redirect to the actual portal
+            logger.info(f"🔄 Following final redirect to portal: {redirect_url}")
+            portal_response = session.get(redirect_url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
+            logger.info(f"🏁 Final portal URL: {portal_response.url}")
+            return portal_response
+        else:
+            logger.error(f"❌ OAuth authorization failed with status: {auth_submit_response.status_code}")
+            return None
+    else:
+        logger.error("❌ Could not find OAuth authorization form")
         return None
 
 def check_for_changes():
@@ -229,38 +286,14 @@ def check_for_changes():
     
     if oauth_result and oauth_result.status_code == 200:
         # Check if we're actually on a logged-in page (not a login page)
-        if 'login' not in oauth_result.url.lower() and 'account/login' not in oauth_result.url.lower():
-            logger.info("✅ OAuth login successful!")
+        final_url = oauth_result.url
+        if 'link.arise.com' in final_url and 'login' not in final_url.lower():
+            logger.info("✅ OAuth login successful! Reached the portal.")
             login_successful = True
         else:
-            logger.warning("⚠️  OAuth login may have failed - still on login page")
+            logger.warning(f"⚠️  OAuth login may have failed - final URL: {final_url}")
     else:
         logger.warning("⚠️  OAuth login failed or returned unexpected response")
-    
-    # If OAuth failed, try direct login to OAuth endpoint
-    if not login_successful:
-        logger.info("🔄 Trying direct OAuth login...")
-        try:
-            # Try posting directly to the OAuth login endpoint
-            oauth_login_data = {
-                'Username': arise_username,
-                'Password': arise_password,
-                'button': 'login'
-            }
-            direct_response = session.post(
-                'https://oauth.arise.com/Account/Login', 
-                data=oauth_login_data, 
-                allow_redirects=True,
-                timeout=REQUEST_TIMEOUT
-            )
-            
-            if direct_response.status_code == 200 and 'login' not in direct_response.url.lower():
-                login_successful = True
-                logger.info("✅ Direct OAuth login successful!")
-            else:
-                logger.warning("❌ Direct OAuth login failed")
-        except Exception as e:
-            logger.warning(f"Direct OAuth login failed: {e}")
     
     if not login_successful:
         logger.error("❌ All login attempts failed!")
