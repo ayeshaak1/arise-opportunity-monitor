@@ -705,8 +705,12 @@ def check_for_changes():
         try:
             with open('previous_state.txt', 'r') as f:
                 previous_state = f.read().strip()
+            logger.info(f"📖 Previous state loaded: {previous_state[:120]}{'...' if len(previous_state) > 120 else ''}")
         except FileNotFoundError:
             logger.info("No previous state found. This is the first run.")
+        except Exception as read_err:
+            logger.warning(f"⚠️  Could not read previous state ({read_err}). Treating as first run.")
+            previous_state = None
 
         # STEP 6: Determine current state representation
         # Use a simple string that represents the opportunity state
@@ -739,8 +743,9 @@ def check_for_changes():
         # STEP 7: Parse previous state
         try:
             previous_hash, previous_state_str, previous_details = previous_state.split('|', 2)
+            logger.info(f"📊 Parsed previous state: state={previous_state_str}, details_sample={previous_details[:60] if previous_details else 'none'}")
         except ValueError:
-            logger.error("❌ Corrupted previous state file")
+            logger.error(f"❌ Corrupted previous state file: {previous_state}")
             previous_hash = ""
             previous_state_str = ""
             previous_details = ""
@@ -786,10 +791,14 @@ def check_for_changes():
             with open('previous_state.txt', 'w') as f:
                 f.write(f"{current_state_hash}|{current_state}|{state_details}")
                 
-            logger.info("💾 New state saved")
+            logger.info(f"💾 New state saved: {current_state}|details={state_details}")
             return True
         else:
             logger.info("✅ No changes detected in opportunity status.")
+            # Still persist the current state so cron-based runs pick it up
+            with open('previous_state.txt', 'w') as f:
+                f.write(f"{current_state_hash}|{current_state}|{state_details}")
+            logger.debug(f"💾 State refreshed without changes: {current_state}|details={state_details}")
             return True
             
     except Exception as e:

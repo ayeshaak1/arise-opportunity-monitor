@@ -50,10 +50,14 @@ jobs:
         pip install -r requirements.txt
         
     - name: Restore previous state from cache
-      uses: actions/cache@v3
+      id: restore-state
+      uses: actions/cache@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}
+        key: arise-state-${{ github.ref }}-${{ github.run_id }}
+        restore-keys: |
+          arise-state-${{ github.ref }}-
+          arise-state-
 
     - name: Run monitor
       env:
@@ -69,9 +73,19 @@ jobs:
         # Run the monitor
         python monitor.py
 
+    - name: Ensure state file exists
+      run: |
+        if [ ! -f previous_state.txt ]; then
+          echo "No previous_state.txt generated, creating placeholder"
+          echo "NO_STATE" > previous_state.txt
+        fi
+
     - name: Save state to cache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}
+        key: arise-state-${{ github.ref }}-${{ github.run_id }}
+        restore-keys: |
+          arise-state-${{ github.ref }}-
+          arise-state-
 
