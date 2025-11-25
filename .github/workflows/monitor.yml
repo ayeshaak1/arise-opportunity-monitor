@@ -49,15 +49,24 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Restore previous state from cache
-      id: restore-state
+    - name: Restore previous state
+      id: cache-state
       uses: actions/cache@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-${{ github.run_id }}
+        key: arise-state-${{ github.ref }}
         restore-keys: |
-          arise-state-${{ github.ref }}-
+          arise-state-${{ github.ref }}
           arise-state-
+
+    - name: Verify state file
+      run: |
+        if [ -f previous_state.txt ]; then
+          echo "✅ State file restored from cache:"
+          cat previous_state.txt
+        else
+          echo "ℹ️  No previous state file found (first run or cache miss)"
+        fi
 
     - name: Run monitor
       env:
@@ -73,18 +82,23 @@ jobs:
         # Run the monitor
         python monitor.py
 
-    - name: Ensure state file exists
+    - name: Verify state file after monitor
+      if: always()
       run: |
-        if [ ! -f previous_state.txt ]; then
-          echo "No previous_state.txt generated, creating placeholder"
-          echo "NO_STATE" > previous_state.txt
+        if [ -f previous_state.txt ]; then
+          echo "✅ State file exists after monitor run:"
+          cat previous_state.txt
+        else
+          echo "❌ ERROR: State file not found after monitor run!"
+          exit 1
         fi
 
     - name: Save state to cache
       uses: actions/cache@v4
+      if: always()
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-${{ github.run_id }}
+        key: arise-state-${{ github.ref }}-${{ hashFiles('previous_state.txt') }}
         restore-keys: |
           arise-state-${{ github.ref }}-
           arise-state-
