@@ -54,9 +54,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}
+        key: arise-state-${{ github.ref }}-${{ hashFiles('previous_state.txt') }}
         restore-keys: |
-          arise-state-${{ github.ref }}
+          arise-state-${{ github.ref }}-
           arise-state-
 
     - name: Verify state file
@@ -94,13 +94,9 @@ jobs:
         fi
 
     - name: Save state to cache
-      uses: actions/cache@v4
+      uses: actions/cache/save@v4
       if: always()
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}
-        restore-keys: |
-          arise-state-${{ github.ref }}
-          arise-state-
-        save-always: true
+        key: arise-state-${{ github.ref }}-${{ hashFiles('previous_state.txt') }}
 
