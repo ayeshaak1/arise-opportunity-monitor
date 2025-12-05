@@ -54,7 +54,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-${{ hashFiles('previous_state.txt') }}
+        key: arise-state-${{ github.ref }}-no-match
         restore-keys: |
           arise-state-${{ github.ref }}-
           arise-state-
