@@ -51,11 +51,12 @@ jobs:
         
     - name: Restore previous state
       id: cache-state
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-no-match
+        key: arise-state-${{ github.ref }}-latest
         restore-keys: |
+          arise-state-${{ github.ref }}-latest
           arise-state-${{ github.ref }}-
           arise-state-
 
@@ -98,5 +99,5 @@ jobs:
       if: always()
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-${{ hashFiles('previous_state.txt') }}
+        key: arise-state-${{ github.ref }}-latest
 
