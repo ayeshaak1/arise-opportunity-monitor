@@ -54,10 +54,9 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-no-match-here
+        key: arise-state-${{ github.ref }}-latest
         restore-keys: |
-          arise-state-${{ github.ref }}-
-          arise-state-
+          arise-state-${{ github.ref }}-latest
 
     - name: Verify state file
       run: |
@@ -99,6 +98,6 @@ jobs:
       id: cache-save
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-${{ hashFiles('previous_state.txt') }}
+        key: arise-state-${{ github.ref }}-latest
       continue-on-error: true
 
