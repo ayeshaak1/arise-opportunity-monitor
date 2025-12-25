@@ -60,15 +60,21 @@ jobs:
           arise-state-
 
     - name: Verify state file restored
+      id: verify-restore
       run: |
         if [ -f previous_state.txt ]; then
           echo "✅ State file restored from cache:"
           cat previous_state.txt
           echo ""
           echo "Cache hit: ${{ steps.cache-state.outputs.cache-hit }}"
+          # Save the restored state hash for comparison later
+          RESTORED_HASH=$(sha256sum previous_state.txt | awk '{print $1}' | cut -c1-16)
+          echo "restored-hash=$RESTORED_HASH" >> $GITHUB_OUTPUT
+          echo "Restored state hash: $RESTORED_HASH"
         else
           echo "ℹ️  No previous state file found (first run or cache miss)"
           echo "Cache hit: ${{ steps.cache-state.outputs.cache-hit }}"
+          echo "restored-hash=" >> $GITHUB_OUTPUT
         fi
 
     - name: Run monitor
@@ -98,39 +104,45 @@ jobs:
           exit 1
         fi
 
-    - name: Calculate state file hash
+    - name: Check if state changed and save to cache
       if: always()
-      id: state-hash
+      id: state-check
       run: |
-        if [ -f previous_state.txt ]; then
-          # Calculate hash of the current state file
-          HASH=$(sha256sum previous_state.txt | awk '{print $1}' | cut -c1-16)
-          echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "State file hash: $HASH"
-          echo "State file content:"
-          cat previous_state.txt
-        else
+        if [ ! -f previous_state.txt ]; then
           echo "ERROR: previous_state.txt not found"
           exit 1
         fi
+        
+        # Calculate hash of current state file
+        CURRENT_HASH=$(sha256sum previous_state.txt | awk '{print $1}' | cut -c1-16)
+        echo "Current state hash: $CURRENT_HASH"
+        echo "hash=$CURRENT_HASH" >> $GITHUB_OUTPUT
+        
+        # Compare with restored hash to see if state changed
+        RESTORED_HASH="${{ steps.verify-restore.outputs.restored-hash }}"
+        
+        if [ -n "$RESTORED_HASH" ] && [ "$CURRENT_HASH" == "$RESTORED_HASH" ]; then
+          # State hasn't changed, don't save to cache
+          echo "State file content:"
+          cat previous_state.txt
+          echo ""
+          echo "ℹ️  State unchanged (hash matches restored: $RESTORED_HASH) - skipping cache save"
+          echo "changed=false" >> $GITHUB_OUTPUT
+        else
+          # State changed or no cache was restored, save to cache
+          echo "State changed or first run - will save to cache"
+          echo "Restored hash: ${RESTORED_HASH:-none}"
+          echo "Current hash: $CURRENT_HASH"
+          echo "State file content:"
+          cat previous_state.txt
+          echo "changed=true" >> $GITHUB_OUTPUT
+        fi
 
     - name: Save state to cache
-      if: always() && steps.state-hash.outcome == 'success'
+      if: always() && steps.state-check.outcome == 'success' && steps.state-check.outputs.changed == 'true'
       id: cache-save
       uses: actions/cache/save@v4
-      continue-on-error: true
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-${{ steps.state-hash.outputs.hash }}
-
-    - name: Verify cache save result
-      if: always()
-      run: |
-        if [ "${{ steps.cache-save.outcome }}" == "success" ]; then
-          echo "✅ Cache saved successfully with key: arise-state-${{ github.ref }}-${{ steps.state-hash.outputs.hash }}"
-        elif [ "${{ steps.cache-save.outcome }}" == "failure" ]; then
-          echo "ℹ️  Cache save skipped (cache with this key already exists - state unchanged)"
-        else
-          echo "⚠️  Cache save step was skipped"
-        fi
+        key: arise-state-${{ github.ref }}-${{ steps.state-check.outputs.hash }}
 
