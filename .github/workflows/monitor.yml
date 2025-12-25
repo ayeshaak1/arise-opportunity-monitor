@@ -103,7 +103,7 @@ jobs:
       id: state-hash
       run: |
         if [ -f previous_state.txt ]; then
-          # Calculate hash of the state file content
+          # Calculate hash of the current state file
           HASH=$(sha256sum previous_state.txt | awk '{print $1}' | cut -c1-16)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
           echo "State file hash: $HASH"
@@ -116,8 +116,21 @@ jobs:
 
     - name: Save state to cache
       if: always() && steps.state-hash.outcome == 'success'
+      id: cache-save
       uses: actions/cache/save@v4
+      continue-on-error: true
       with:
         path: previous_state.txt
         key: arise-state-${{ github.ref }}-${{ steps.state-hash.outputs.hash }}
+
+    - name: Verify cache save result
+      if: always()
+      run: |
+        if [ "${{ steps.cache-save.outcome }}" == "success" ]; then
+          echo "✅ Cache saved successfully with key: arise-state-${{ github.ref }}-${{ steps.state-hash.outputs.hash }}"
+        elif [ "${{ steps.cache-save.outcome }}" == "failure" ]; then
+          echo "ℹ️  Cache save skipped (cache with this key already exists - state unchanged)"
+        else
+          echo "⚠️  Cache save step was skipped"
+        fi
 
