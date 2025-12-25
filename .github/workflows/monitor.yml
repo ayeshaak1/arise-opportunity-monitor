@@ -51,20 +51,24 @@ jobs:
         
     - name: Restore previous state
       id: cache-state
-      uses: actions/cache/restore@v4
+      uses: actions/cache@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-latest
+        key: arise-state-${{ github.ref }}-no-match-here
         restore-keys: |
-          arise-state-${{ github.ref }}-latest
+          arise-state-${{ github.ref }}-
+          arise-state-
 
-    - name: Verify state file
+    - name: Verify state file restored
       run: |
         if [ -f previous_state.txt ]; then
           echo "✅ State file restored from cache:"
           cat previous_state.txt
+          echo ""
+          echo "Cache hit: ${{ steps.cache-state.outputs.cache-hit }}"
         else
           echo "ℹ️  No previous state file found (first run or cache miss)"
+          echo "Cache hit: ${{ steps.cache-state.outputs.cache-hit }}"
         fi
 
     - name: Run monitor
@@ -87,17 +91,33 @@ jobs:
         if [ -f previous_state.txt ]; then
           echo "✅ State file exists after monitor run:"
           cat previous_state.txt
+          echo ""
+          echo "File size: $(wc -c < previous_state.txt) bytes"
         else
           echo "❌ ERROR: State file not found after monitor run!"
           exit 1
         fi
 
-    - name: Save state to cache
-      uses: actions/cache/save@v4
+    - name: Calculate state file hash
       if: always()
-      id: cache-save
+      id: state-hash
+      run: |
+        if [ -f previous_state.txt ]; then
+          # Calculate hash of the state file content
+          HASH=$(sha256sum previous_state.txt | awk '{print $1}' | cut -c1-16)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+          echo "State file hash: $HASH"
+          echo "State file content:"
+          cat previous_state.txt
+        else
+          echo "ERROR: previous_state.txt not found"
+          exit 1
+        fi
+
+    - name: Save state to cache
+      if: always() && steps.state-hash.outcome == 'success'
+      uses: actions/cache/save@v4
       with:
         path: previous_state.txt
-        key: arise-state-${{ github.ref }}-latest
-      continue-on-error: true
+        key: arise-state-${{ github.ref }}-${{ steps.state-hash.outputs.hash }}
 
